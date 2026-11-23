@@ -742,6 +742,7 @@ open(db,'rb').read()  # e contar ocorrências de
 | 0.1.7 | fix do clique dentro da janela (comparação pela janela raiz) |
 | 0.1.9 | renomear entrada (`Ctrl+E`) com edição inline, atalho configurável e ação no painel |
 | 0.1.11 | prévia das linhas no "Save N items" (miniatura na linha; primeira versão com tooltip) |
+| 0.1.26 | auditoria de segurança: chave fail-closed (sem CSPRNG/DPAPI o banco não abre), OCR sem arquivo temporário, anti-SSRF na prévia de links, CSP fixa e asset protocol desligado |
 | 0.1.24 | atualização automática pelas releases do GitHub (`Settings → Updates`): confere o SHA-256 publicado, troca o exe por rename (o que roda nunca é sobrescrito), reabre passando o PID antigo, rollback se o novo não subir; `deploy.bat` publica a release com `rayclip.exe` + `.sha256` + instalador |
 | 0.1.23 | paridade com o Raycast no painel: reordenar fixados, editar conteúdo (`Ctrl+Shift+E`), copiar cor em HEX/RGB/HSL/HSV, apagar entradas recentes (5 min … 24 h) com confirmação e grupos de data "This Year"/"Older" |
 | 0.1.22 | idioma da interface trocável (`Settings → Preferences → Language`): inglês (padrão) e português do Brasil, com ~270 textos traduzidos e fallback para o inglês |
@@ -833,6 +834,61 @@ legível em disco; clique seleciona / duplo clique cola; `Backspace` na busca n�
 apaga nada.
 
 Tabela completa de mais de 30 testes com resultados: ver `README.md`.
+### 8.33 v0.1.26 — auditoria de segurança: falhar fechado
+
+Uma revisão externa do código (feita depois que o projeto foi para o GitHub)
+listou cinco pontos. Todos os quatro que dependiam de código foram corrigidos
+aqui; o quinto (o app inteiro rodar elevado) ficou documentado como decisão
+consciente, com o caminho de saída anotado.
+
+| Achado | Antes | Depois |
+|---|---|---|
+| **1. Chave "de reserva"** (`key.rs`) | se `BCryptGenRandom` falhasse, a chave saía de tempo + endereço de memória (o próprio comentário admitia: não é CSPRNG) | `random_bytes()` devolve `Option`; sem CSPRNG **não existe chave** e o banco não abre. Uma chave previsível é pior que a ausência de histórico |
+| **2. Chave em claro se o DPAPI falhasse** (`key.rs`) | `protect().unwrap_or_else(...)` gravava os 32 bytes crus em `rayclip.key` | sem `CryptProtectData` não se grava nada: `Err(motivo)`, banco fechado. Chave **antiga** crua (de build pré-0.1.26) é aceita e **re-protegida na hora** — não se joga fora o histórico de ninguém |
+| **3. OCR gravava PNG em `%TEMP%`** (`ocr.rs`) | a imagem do clipboard ia em claro para `rayclip-ocr-<pid>-<ts>.png`, era lida e apagada (e ficava lá para sempre se o app morresse no meio) | `InMemoryRandomAccessStream` + `BitmapDecoder`: a imagem reduzida é codificada em PNG **na memória** e decodificada de lá. Nenhum arquivo. `cleanup_temp()` ficou só para limpar restos das builds antigas |
+| **4. SSRF na prévia de links** (`linkmeta.rs`) | `ureq` seguia redirecionamentos sozinho e nada impedia `http://192.168.0.1/admin`, `http://localhost:8080` ou `http://169.254.169.254/` | `url_permitida()` + `ip_publico()`: só http/https, host precisa resolver **só** para IP público (loopback, 10/8, 172.16/12, 192.168/16, 169.254/16, CGNAT 100.64/10, `fc00::/7`, `fe80::/10`, multicast, 0/8, 240/4 fora), nome de máquina sem domínio barrado. `agent().redirects(0)` e `pedir()` seguem até 5 saltos **revalidando cada `Location`**. O plano B por `curl.exe` não segue redirecionamento (`--max-redirs 0 --proto =http,https`) |
+| **5. App inteiro elevado** | `requireAdministrator` no manifesto de release | mantido — é o que permite colar em janelas elevadas (o Raycast resolve isso com um helper `UIAccess`). O caminho de saída, se um dia for necessário, é separar um serviço auxiliar elevado; está anotado no README |
+| **6. CSP `null` e asset protocol `**`** (`tauri.conf.json`) | a interface podia carregar qualquer coisa e ler qualquer arquivo do disco | CSP fixa (`script-src 'self'`, `img-src` só o próprio app + `data:`/`blob:`, `object-src 'none'`, `frame-src 'none'`) e **asset protocol desligado**: o ícone do app de origem agora vem de `http://rayclip.localhost/src/<nome>` (nome validado, só a pasta `media/`, sem `..`). `connect-src` limitado ao IPC |
+
+**Detalhes que valem registro**
+
+* `Store` ganhou `key_error: Option<String>` e o app **continua abrindo** em modo
+  somente-memória quando a chave não sai; `system_status` publica `keyError` e
+  `Settings → Data & Security` mostra o motivo em vermelho. Antes o app abria
+  vazio, sem explicar nada.
+* O `id` do protocolo chega sem o `.png` (o handler tira o sufixo de todas as
+  rotas): a rota `/src/` remonta o nome e só aceita `src-*`.
+* A CSP foi verificada com o app rodando: **0 violações**, 11 imagens carregadas,
+  nenhuma quebrada, e `/src/rayclip.db` → 404 (traversal barrado).
+* O `secure_delete` continua ligado, mas a promessa no README foi corrigida:
+  em SSD, com *wear leveling*, **nenhum software** garante apagar o setor físico.
+
+**Verificação (build 0.1.26)**
+
+| Verificação | Resultado |
+|---|---|
+| `cargo test --lib` | **34 passam** (inclui 4 de chave, 3 de SSRF, e os de store/settings/update) |
+| Chave crua antiga → re-protegida | `chave_antiga_sem_dpapi_e_reprotegida`: arquivo deixa de ter os 32 bytes, DPAPI abre a nova, chave devolvida é a mesma (histórico preservado) |
+| Chave ilegível (outro usuário) | `chave_ilegivel_nao_e_sobrescrita`: `Err`, arquivo intacto |
+| SSRF | `bloqueia_destinos_internos` (27 URLs: loopback, privados, link-local, metadata da nuvem, IPv6 local, nome sem domínio, `user@host`, `file:`/`javascript:`) e `aceita_destinos_publicos` |
+| Ao vivo: copiar `http://127.0.0.1:9222/json` | log `link: destino nao publico bloqueado (127.0.0.1:9222 salto 0)`; nenhuma requisição saiu |
+| Ao vivo: copiar `https://github.com/luigiarrud4/Rayclip` | metadados normais (`site: GitHub` + ícone) — a guarda não bloqueia o caso comum |
+| OCR em memória | 3 imagens reindexadas (`ocr: indexed …`), 1.249 entradas com texto preservadas, **0** arquivos `rayclip-ocr-*.png` em `%TEMP%` |
+| CSP + `/src/` | 0 violações; `src-opera.png` 32×32 carrega; `rayclip.db` e `../rayclip.db` → falha |
+| Release | `Rayclip_0.1.26_x64-setup.exe`, 3.729.413 B, SHA256 `4e4bb5d63f143c234fa91ffa1a857247b3edee1efbf942cc1f8a98505b668f9` |
+
+**Arquivos tocados:** `src-tauri/src/key.rs` (reescrito), `src-tauri/src/ocr.rs`,
+`src-tauri/src/linkmeta.rs`, `src-tauri/src/store.rs`, `src-tauri/src/lib.rs`
+(`system_status` + rota `/src/`), `src-tauri/tauri.conf.json`, `src/lib/format.ts`,
+`src/components/SettingsPage.tsx`, `src/styles.css`, `src/lib/i18n.ts`.
+
+**O que continua valendo como limite conhecido:** enquanto o Rayclip está aberto,
+qualquer processo **do mesmo usuário** pode ler o histórico pela memória ou pedir
+as imagens ao `rayclip.localhost` — DPAPI protege contra *outro usuário* e contra
+o arquivo copiado para outra máquina, não contra o mesmo login. Isso é inerente a
+qualquer gerenciador de clipboard (o Raycast tem o mesmo limite) e está escrito no
+README.
+
 ### 8.32 v0.1.24 — atualização automática (GitHub releases)
 
 Pedido: *"seria bom um sistema de auto updater porque o rayclip vai para o

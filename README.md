@@ -167,8 +167,9 @@ copiar o CSS reproduz o visual 1:1 com um binário ~10 MB).
     ProtonPass) — verificado: texto com o marcador não entrou no histórico;
   - o Raycast ainda tem `clipboard_history_disabled_applications` (ignorar apps)
     e banco **criptografado** (`clipboard.db`/`settings.db` com header aleatório,
-    SQLCipher-style) — daqui para frente o store local nosso pode ser opcionalmente
-    criptografado com DPAPI se você quiser.
+    SQLCipher-style). **O nosso também é cifrado** — e não "no futuro": desde a
+    v0.1.4 todo o conteúdo mora em um banco SQLCipher com a chave selada por
+    DPAPI (§ *Banco cifrado* logo abaixo).
 - **Build de release pede UAC** (`requireAdministrator` no manifesto embutido via
   `tauri_build::WindowsAttributes`), permitindo colar em janelas elevadas; o debug
   fica sem pedido para não atrapalhar o desenvolvimento. A janela também força
@@ -409,7 +410,11 @@ ayclip.db`.
   sobrou nenhum arquivo de conteúdo em claro — o `store.json` e a pasta
   `images/` do formato antigo são **migrados na primeira abertura e apagados**.
 - `PRAGMA secure_delete = ON`: o que é apagado (limite de histórico, "Clear
-  History") é zerado nas páginas, não fica recuperável no arquivo.
+  History") é zerado nas páginas do banco em vez de ficar para trás no arquivo.
+  Isso é o máximo que o SQLite promete: em SSD, por causa do *wear leveling* e
+  do cache do controlador, **nenhum software consegue garantir** que os bytes
+  físicos sumiram — a promessa honesta é "não há cópia em claro no arquivo nem
+  no sistema de arquivos", não "destruição física do setor".
 - A pasta `media/` guarda só mídia **derivada** (ícone do app de origem,
   favicon/capa de link), que não é conteúdo do clipboard.
 - As imagens chegam à interface pelo protocolo próprio
@@ -461,6 +466,44 @@ nosso. Dentro do app o alvo do clique é uma janela filha do WebView2 (processo
 fechava e nada era selecionado nem colado. Agora a comparação é pela **janela
 raiz** (`GetAncestor(GA_ROOT)`), que é sempre a nossa. Verificado: clique numa
 linha seleciona e atualiza o painel de detalhes; duplo clique cola e fecha.
+
+### Novidades da v0.1.26 — auditoria de segurança (falhar fechado)
+
+Uma revisão externa do código apontou cinco coisas. Quatro eram de código e
+foram corrigidas; a quinta é uma decisão, e ficou registrada como tal.
+
+- **A chave nunca é "improvisada".** Se o `BCryptGenRandom` falhar, não existe
+  chave — antes o código montava uma a partir de tempo + endereço de memória
+  (previsível, e o próprio comentário dizia isso). Agora a função devolve
+  `None`, o banco não abre e o app explica o motivo em **Configurações → Data &
+  Security**. Melhor não guardar do que guardar mal.
+- **A chave nunca é gravada em claro.** Se o `CryptProtectData` (DPAPI) falhar,
+  antes os 32 bytes crus iam para `rayclip.key`. Agora não se grava nada —
+  exceto uma chave **antiga** de build pré-0.1.26, que é aceita e
+  **re-protegida na hora** (ninguém perde o histórico).
+- **O OCR não toca mais o disco.** A imagem ia em claro para
+  `%TEMP%ayclip-ocr-*.png`. Agora vai por `InMemoryRandomAccessStream` +
+  `BitmapDecoder`: reduzida e decodificada na memória. Zero arquivo.
+- **A prévia de links não é mais uma porta para a sua rede.** Copiar
+  `http://192.168.0.1/admin` ou `http://169.254.169.254/` fazia o app fazer a
+  requisição. Agora só passa http/https para host que resolva **exclusivamente**
+  para IP público (loopback, 10/8, 172.16/12, 192.168/16, link-local, CGNAT,
+  IPv6 local, multicast e nomes de máquina sem domínio barrados), e cada salto
+  de redirecionamento é revalidado (o `curl.exe` de plano B não segue nenhum).
+- **A interface não pode mais ler o disco inteiro.** `csp` era `null` e o
+  escopo do asset protocol era `**`. Agora há CSP (`script-src 'self'`,
+  `object-src 'none'`, `frame-src 'none'`) e o asset protocol foi **desligado**:
+  o ícone do app de origem vem de `http://rayclip.localhost/src/<nome>`, com o
+  nome validado e só a pasta `media/`.
+- **Promessa corrigida:** `secure_delete` zera as páginas do banco, mas em SSD
+  (wear leveling) nenhum software garante apagar o setor físico. O README não
+  promete mais isso.
+
+**Verificado:** `cargo test --lib` 34/34; copiar um link interno não dispara
+requisição (`destino nao publico bloqueado` no log) enquanto um link público
+continua ganhando site + ícone; OCR reindexou 3 imagens sem deixar um único
+`rayclip-ocr-*.png`; 0 violações de CSP com todas as imagens carregando; e
+`/src/rayclip.db` responde 404.
 
 ### Novidades da v0.1.24 — atualização automática pelo GitHub
 

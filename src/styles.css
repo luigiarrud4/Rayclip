@@ -2397,6 +2397,11 @@ html[data-translucency="on"][data-theme="light"] {
 .settings-hint[data-kind="err"] {
   color: var(--red);
 }
+.settings-hint[data-kind="warn"] {
+  color: var(--red);
+  border-left: 2px solid var(--red);
+  padding-left: 10px;
+}
 /* Aviso discreto no rodapé: dá para ignorar e continuar usando o app. */
 .update-pill {
   display: inline-flex;

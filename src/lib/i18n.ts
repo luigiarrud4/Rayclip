@@ -459,6 +459,8 @@ Object.assign(PT, {
   "Release page": "Página da release",
   "Downloading… {pct}%": "Baixando… {pct}%",
   "Downloading…": "Baixando…",
+  "The encrypted database could not be opened, so nothing is being saved this session: {msg}. The application fails closed on purpose — it never writes a key that is not protected by Windows, and never falls back to a predictable one.":
+    "O banco cifrado não pôde ser aberto, então nada está sendo salvo nesta sessão: {msg}. O aplicativo falha fechado de propósito — nunca grava uma chave que não esteja protegida pelo Windows, nem cai para uma chave previsível.",
   "Update {v}": "Atualizar {v}",
   "Update available — click to install": "Atualização disponível — clique para instalar",
   "The update downloads the new rayclip.exe, checks its SHA-256 against the one published in the release, and swaps the file in place. The running exe is only renamed, never overwritten, and the previous version is kept next to it until the next start — so a failed update always leaves you with a working Rayclip. Your history, settings and database are never touched.":

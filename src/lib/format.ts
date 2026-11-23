@@ -1,10 +1,19 @@
-import { convertFileSrc } from "@tauri-apps/api/core";
 import type { Entry } from "./types";
 import { localeOf, type Lang, type T } from "./i18n";
 
-/** Arquivo local (ícone de app, capa de link) servido pelo protocolo de asset. */
-export const fileUrl = (path?: string | null) =>
-  path ? convertFileSrc(path.replace(/\\/g, "/")) : "";
+/**
+ * Arquivo derivado em `media/` (ícone do app de origem) servido pelo nosso
+ * próprio protocolo: `media/src-opera.png` -> `/src/src-opera.png`.
+ *
+ * Antes usávamos o **asset protocol** do Tauri, que precisa de um escopo de
+ * disco — o nosso era `**`, ou seja, a interface podia pedir qualquer arquivo
+ * da máquina. Aqui só existe uma pasta, sem caminho e sem `..`.
+ */
+export const fileUrl = (path?: string | null) => {
+  if (!path) return "";
+  const nome = path.split(/[\\/]/).pop() || "";
+  return nome ? `http://rayclip.localhost/src/${encodeURIComponent(nome)}` : "";
+};
 
 /**
  * Imagem/miniatura que mora **dentro do banco cifrado**: o backend serve em

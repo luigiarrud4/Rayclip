@@ -3,31 +3,24 @@
 //! Mesma ideia do Raycast: o texto reconhecido é guardado junto da entrada para
 //! que a busca encontre imagens pelo conteúdo escrito nelas.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 const MAX_OCR_SIDE: u32 = 2400;
 
 /// Lê o texto de uma imagem em disco. Retorna `None` quando não há texto.
 #[allow(dead_code)]
 pub fn image_text(path: &Path) -> Option<String> {
-    // WinRT exige um apartment inicializado nesta thread.
-    init_apartment();
-
-    let prepared = prepare(path)?;
-    let text = recognize(&prepared);
-    if prepared != path {
-        let _ = std::fs::remove_file(&prepared);
-    }
-    let text = text?;
-    let cleaned = text.trim().to_string();
-    if cleaned.is_empty() {
-        None
-    } else {
-        Some(cleaned)
-    }
+    let bytes = std::fs::read(path).ok()?;
+    image_text_bytes(&bytes)
 }
 
 /// Lê o texto de uma imagem que está em memória (bytes do banco cifrado).
+///
+/// **Nada é gravado em disco.** O WinRT aceita um `InMemoryRandomAccessStream`:
+/// a imagem reduzida é codificada em PNG na memória e decodificada de lá. A
+/// versão anterior salvava um PNG em `%TEMP%`, o que deixava a imagem do
+/// clipboard em claro no disco por alguns instantes (e para sempre após um
+/// crash no meio do OCR).
 pub fn image_text_bytes(bytes: &[u8]) -> Option<String> {
     init_apartment();
     let img = image::load_from_memory(bytes).ok()?;
@@ -36,15 +29,11 @@ pub fn image_text_bytes(bytes: &[u8]) -> Option<String> {
         MAX_OCR_SIDE,
         image::imageops::FilterType::Lanczos3,
     );
-    let stamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    let out =
-        std::env::temp_dir().join(format!("rayclip-ocr-{}-{}.png", std::process::id(), stamp));
-    scaled.save(&out).ok()?;
-    let text = recognize(&out);
-    let _ = std::fs::remove_file(&out);
+    let mut png: Vec<u8> = Vec::new();
+    scaled
+        .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+        .ok()?;
+    let text = recognize_bytes(&png);
     let cleaned = text?.trim().to_string();
     if cleaned.is_empty() {
         None
@@ -53,8 +42,8 @@ pub fn image_text_bytes(bytes: &[u8]) -> Option<String> {
     }
 }
 
-/// Remove PNGs temporários deixados por execuções anteriores (um crash no meio
-/// do OCR deixaria a imagem do clipboard em claro no `%TEMP%`).
+/// Remove PNGs temporários deixados por builds antigas (até a 0.1.25 o OCR
+/// gravava a imagem em `%TEMP%`). Mantido só para limpar o que já existe.
 pub fn cleanup_temp() {
     let dir = std::env::temp_dir();
     let Ok(rd) = std::fs::read_dir(&dir) else {
@@ -82,33 +71,20 @@ fn init_apartment() {
     }
 }
 
-/// O motor tem um limite de dimensão; imagens grandes são reduzidas antes.
-#[allow(dead_code)]
-fn prepare(path: &Path) -> Option<PathBuf> {
-    let img = image::open(path).ok()?;
-    if img.width() <= MAX_OCR_SIDE && img.height() <= MAX_OCR_SIDE {
-        return Some(path.to_path_buf());
-    }
-    let scaled = img.resize(
-        MAX_OCR_SIDE,
-        MAX_OCR_SIDE,
-        image::imageops::FilterType::Lanczos3,
-    );
-    let out = std::env::temp_dir().join(format!("rayclip-ocr-{}.png", std::process::id()));
-    scaled.save(&out).ok()?;
-    Some(out)
-}
-
-fn recognize(path: &Path) -> Option<String> {
-    use windows::core::HSTRING;
+fn recognize_bytes(png: &[u8]) -> Option<String> {
     use windows::Graphics::Imaging::BitmapDecoder;
     use windows::Media::Ocr::OcrEngine;
-    use windows::Storage::{FileAccessMode, StorageFile};
+    use windows::Storage::Streams::{DataWriter, InMemoryRandomAccessStream};
 
     let engine = OcrEngine::TryCreateFromUserProfileLanguages().ok()?;
-    let wide = HSTRING::from(path.to_string_lossy().as_ref());
-    let file = StorageFile::GetFileFromPathAsync(&wide).ok()?.join().ok()?;
-    let stream = file.OpenAsync(FileAccessMode::Read).ok()?.join().ok()?;
+    // A imagem vive só na memória: nada de arquivo temporário em claro.
+    let stream = InMemoryRandomAccessStream::new().ok()?;
+    let writer = DataWriter::CreateDataWriter(&stream).ok()?;
+    writer.WriteBytes(png).ok()?;
+    let _ = writer.StoreAsync().ok()?.join().ok()?;
+    let _ = writer.FlushAsync().ok()?.join().ok()?;
+    let _ = writer.DetachStream().ok();
+    stream.Seek(0).ok()?;
     let decoder = BitmapDecoder::CreateAsync(&stream).ok()?.join().ok()?;
     let bitmap = decoder.GetSoftwareBitmapAsync().ok()?.join().ok()?;
     let result = engine.RecognizeAsync(&bitmap).ok()?.join().ok()?;

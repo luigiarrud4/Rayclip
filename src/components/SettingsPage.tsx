@@ -156,6 +156,7 @@ export function SettingsPage({
     exe: string;
     winTransparency?: boolean;
     encrypted?: boolean;
+    keyError?: string | null;
     dbPath?: string;
   } | null>(null);
   // Importação do histórico do Raycast.
@@ -657,6 +658,14 @@ export function SettingsPage({
                 {sys?.encrypted ? t("Encrypted") : t("Unavailable")}
               </span>
             </Field>
+            {sys?.keyError && (
+              <div className="settings-hint" data-kind="warn">
+                {t(
+                  "The encrypted database could not be opened, so nothing is being saved this session: {msg}. The application fails closed on purpose — it never writes a key that is not protected by Windows, and never falls back to a predictable one.",
+                  { msg: String(sys.keyError) }
+                )}
+              </div>
+            )}
             <div className="settings-hint">
               {t(
                 "The 256-bit key lives in rayclip.key, sealed with Windows DPAPI, so only your Windows user can open it — copying the files to another account or computer is useless. Everything (text, HTML/RTF, images) is inside rayclip.db; no loose files are left behind."

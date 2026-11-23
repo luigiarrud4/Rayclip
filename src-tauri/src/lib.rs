@@ -234,11 +234,12 @@ fn system_status(state: State<AppState>, force: Option<bool>) -> serde_json::Val
             }
         }
     }
-    let (encrypted_db, db_path) = {
+    let (encrypted_db, db_path, key_error) = {
         let store = lock_store(&state.store);
         (
             store.encrypted,
             store.dir.join(store::DB_FILE).to_string_lossy().to_string(),
+            store.key_error.clone(),
         )
     };
     let valor = serde_json::json!({
@@ -247,6 +248,7 @@ fn system_status(state: State<AppState>, force: Option<bool>) -> serde_json::Val
         "elevated": sysinteg::is_elevated(),
         "winTransparency": sysinteg::windows_transparency(),
         "encrypted": encrypted_db,
+        "keyError": key_error,
         "version": env!("CARGO_PKG_VERSION"),
         "dbPath": db_path,
         "exe": std::env::current_exe().map(|p| p.to_string_lossy().to_string()).unwrap_or_default(),
@@ -2375,6 +2377,41 @@ pub fn run() {
             let mut parts = path.splitn(2, '/');
             let kind = parts.next().unwrap_or("");
             let id = parts.next().unwrap_or("").trim_end_matches(".png");
+            // Ícone do app de origem (`media/src-<app>.png`): vem por aqui em vez
+            // do asset protocol do Tauri, que daria à interface acesso a
+            // qualquer arquivo do disco. O nome é validado e só esta pasta é
+            // servida.
+            if kind == "src" {
+                // O `id` chega sem o `.png` (o handler tira o sufixo de todas as
+                // rotas), então o nome do arquivo é remontado aqui.
+                let nome: String = id
+                    .chars()
+                    .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+                    .collect();
+                let arquivo = format!("{nome}.png");
+                let valido = nome.starts_with("src-") && nome.len() > 4;
+                let media = {
+                    let state = ctx.app_handle().state::<AppState>();
+                    let store = lock_store(&state.store);
+                    store.media_dir()
+                };
+                let bytes = if valido {
+                    std::fs::read(media.join(&arquivo)).ok()
+                } else {
+                    None
+                };
+                return match bytes {
+                    Some(b) => Response::builder()
+                        .header("Content-Type", "image/png")
+                        .header("Cache-Control", "public, max-age=31536000, immutable")
+                        .body(b)
+                        .unwrap_or_else(|_| Response::new(Vec::new())),
+                    None => Response::builder()
+                        .status(StatusCode::NOT_FOUND)
+                        .body(Vec::new())
+                        .unwrap_or_else(|_| Response::new(Vec::new())),
+                };
+            }
             // Capa (og:image) guardada em `media/covers/<hash>`.
             if kind == "cover" {
                 let key: String = id

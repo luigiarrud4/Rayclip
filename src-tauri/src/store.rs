@@ -141,15 +141,21 @@ pub struct Store {
     /// histórico em memória está **incompleto**, então `save()` nunca apaga
     /// linhas do banco — senão uma falha de leitura zeraria o histórico.
     pub degraded: bool,
+    /// Motivo pelo qual a chave/banco não abriu (aparece na interface).
+    pub key_error: Option<String>,
 }
 
 impl Store {
     pub fn load(dir: PathBuf) -> Self {
         let _ = std::fs::create_dir_all(&dir);
-        let key = crate::key::load_or_create(&dir);
+        // Fail-closed: sem chave segura (CSPRNG + DPAPI) o banco não abre. O app
+        // continua em memória e o motivo aparece em Configurações.
+        let chave = crate::key::load_or_create(&dir);
         let mut entries_ok: Vec<Entry> = Vec::new();
         let db_path = dir.join(DB_FILE);
-        let db = match Db::open(&db_path, &key) {
+        let mut chave_erro: Option<String> = None;
+        let db = match chave {
+            Ok(key) => match Db::open(&db_path, &key) {
             Ok(db) => {
                 if let Err(e) = db.exec(SCHEMA) {
                     crate::log(&format!("db: schema falhou: {e}"));
@@ -166,6 +172,12 @@ impl Store {
             }
             Err(e) => {
                 crate::log(&format!("db: nao abriu ({e}) - seguindo so em memoria"));
+                None
+            }
+            },
+            Err(motivo) => {
+                crate::log(&format!("db: sem chave ({motivo}) - somente memoria"));
+                chave_erro = Some(motivo);
                 None
             }
         };
@@ -208,6 +220,7 @@ impl Store {
             encrypted: db.is_some(),
             degraded,
             db,
+            key_error: chave_erro,
         }
     }
 
