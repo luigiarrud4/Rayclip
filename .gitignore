@@ -20,3 +20,9 @@ __pycache__/
 Thumbs.db
 desktop.ini
 .DS_Store
+
+# artefatos de execucao do harness de comparacao (gerados a cada rodada)
+_ref/alvo_cmd.txt
+_ref/alvo_state.txt
+_ref/alvo_err.txt
+_ref/compare_resultado.txt
