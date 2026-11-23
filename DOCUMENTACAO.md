@@ -911,19 +911,26 @@ release no GitHub com **três** assets: `rayclip.exe` (o que o updater baixa),
 | troca de verdade (duas cópias no `%TEMP%`): `rayclip.exe` → `.old`, novo no lugar, segundo processo com `--after-update <pid>`, antigo morto | o novo **continua vivo** (não morre como "instância duplicada") e o `.old` fica ao lado |
 | abertura normal seguinte | `.old` apagado, só `rayclip.exe` na pasta |
 | `deploy.bat --build-only` | build + `Rayclip_0.1.24_x64-setup.exe` + `rayclip.exe.sha256` com o hash correto |
+| **atualização real, de ponta a ponta**: instalado pelo NSIS em `%LOCALAPPDATA%\Rayclip` (v0.1.24), publicado v0.1.25 com `deploy.bat 0.1.25`, "Check now" → "Install update" na UI | baixou, conferiu o SHA-256, trocou o exe, reabriu: `%LOCALAPPDATA%\Rayclip\rayclip.exe` ficou **v0.1.25** com o **mesmo SHA-256 do asset da release** (`26033c40…`), o antigo virou `rayclip.exe.old` (v0.1.24), sobrou **um** processo só |
+| abertura normal seguinte (regra de reiniciar) | `.old` apagado; sobrou só `rayclip.exe` + `uninstall.exe` |
 | UI em inglês e pt-BR | "Installed version / Check for updates / Install update / Release page" e "Versão instalada / Procurar atualizações / Instalar atualização / Página da release"; `check_i18n.py` → 321 chaves, 286 usos, 0 sem tradução |
 
-**Para publicar a primeira vez** (uma vez só, no GitHub):
+**Repositório e releases.** O código está em
+<https://github.com/luigiarrud4/Rayclip> (público — o updater lê a API do
+GitHub sem token) e as releases em
+<https://github.com/luigiarrud4/Rayclip/releases>. Para uma versão nova, basta:
 
 ```bat
-gh auth login
-gh repo create luigiarrud4/Rayclip --public --source . --remote origin --push
 deploy.bat
 ```
 
-Se o repositório tiver outro nome, troque a constante `REPO` no `deploy.bat` e
+Se o repositório mudar de nome, troque a constante `REPO` no `deploy.bat` e
 `REPO_PADRAO` em `src-tauri/src/update.rs` (ou compile com
 `RAYCLIP_UPDATE_REPO` no ambiente).
+
+**Pegadinha encontrada no caminho:** o `gh release create` com quebra de linha
+por `^` no meio dos argumentos mandava um `tag_name` inválido (HTTP 422) — a
+linha ficou inteira, sem continuação.
 
 ### 8.31 v0.1.23 — o que ainda faltava em relação ao Raycast (e como foi achado)
 

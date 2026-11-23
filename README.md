@@ -484,6 +484,10 @@ pelo antivírus ou o novo exe não subir, o `.old` volta a ser `rayclip.exe` e
 você continua na versão que tinha. Histórico, ajustes e banco cifrado não são
 tocados.
 
+O código está em **<https://github.com/luigiarrud4/Rayclip>** e as releases em
+**<https://github.com/luigiarrud4/Rayclip/releases>** (o repositório é público
+porque o updater lê a API do GitHub sem token).
+
 Para publicar uma versão nova existe o `deploy.bat`:
 
 ```bat
