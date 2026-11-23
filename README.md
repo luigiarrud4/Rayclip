@@ -467,6 +467,29 @@ fechava e nada era selecionado nem colado. Agora a comparação é pela **janela
 raiz** (`GetAncestor(GA_ROOT)`), que é sempre a nossa. Verificado: clique numa
 linha seleciona e atualiza o painel de detalhes; duplo clique cola e fecha.
 
+### Novidades da v0.1.27 — auditoria de colar, apagar e exportar
+
+Segunda passada, agora nos comandos IPC. O que já estava certo (SQL sempre com
+parâmetros `?1`, `open_url` restrito a http/https/mailto, `reveal_path` só para
+caminho existente, nomes de arquivo saneados e sem traversal, `paste_many` com as
+8 sequências ignoradas, log sem conteúdo, nenhum `dangerouslySetInnerHTML`) ficou
+como estava. O que faltava:
+
+- **Comandos só de teste desligados em release**: `save_image_to` e
+  `save_many_to` escrevem em qualquer caminho sem diálogo — agora recusam fora da
+  build de desenvolvimento.
+- **A pasta de destino precisa existir** antes de "Salvar N itens" gravar nada.
+- **O plano B por `curl.exe` não grava mais arquivo temporário**: a página ia
+  para `%TEMP%ayclip-fetch-*.out` em claro. Agora o corpo vem pelo stdout e o
+  `Content-Type` por uma marca no fim (a marca é separada pela **última**
+  ocorrência, porque o HTML pode contê-la).
+- **A limpeza de `%TEMP%` cobre os três restos** (`rayclip-ocr-*`,
+  `rayclip-fetch-*.out`, `rayclip-thumb-*`), inclusive os de builds antigas.
+
+**Verificado:** 35 testes passando; `save_many_to` grava 3 arquivos com nomes
+saneados e recusa pasta inexistente; `%TEMP%` sem nenhum `rayclip-*` depois de
+rodar OCR, buscar links e salvar.
+
 ### Novidades da v0.1.26 — auditoria de segurança (falhar fechado)
 
 Uma revisão externa do código apontou cinco coisas. Quatro eram de código e
@@ -482,7 +505,8 @@ foram corrigidas; a quinta é uma decisão, e ficou registrada como tal.
   exceto uma chave **antiga** de build pré-0.1.26, que é aceita e
   **re-protegida na hora** (ninguém perde o histórico).
 - **O OCR não toca mais o disco.** A imagem ia em claro para
-  `%TEMP%ayclip-ocr-*.png`. Agora vai por `InMemoryRandomAccessStream` +
+  `%TEMP%
+ayclip-ocr-*.png`. Agora vai por `InMemoryRandomAccessStream` +
   `BitmapDecoder`: reduzida e decodificada na memória. Zero arquivo.
 - **A prévia de links não é mais uma porta para a sua rede.** Copiar
   `http://192.168.0.1/admin` ou `http://169.254.169.254/` fazia o app fazer a

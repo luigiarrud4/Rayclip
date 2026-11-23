@@ -1211,6 +1211,10 @@ fn save_image_as(
 }
 
 /// Mesma coisa sem diálogo (usado nos testes automatizados).
+///
+/// Escreve em **qualquer** caminho recebido, então só existe nas builds de
+/// desenvolvimento: em release a porta fica fechada (a interface nunca chama;
+/// quem escreve arquivo em release é sempre pelo diálogo do Windows).
 #[tauri::command]
 fn save_image_to(
     state: State<AppState>,
@@ -1218,6 +1222,9 @@ fn save_image_to(
     path: String,
     format: String,
 ) -> Result<String, String> {
+    if !cfg!(debug_assertions) {
+        return Err("save_image_to is a development-only command".into());
+    }
     let (bytes, is_gif) = image_bytes_of(&state, &id)?;
     let fmt = format.to_lowercase();
     let ext = match fmt.as_str() {
@@ -1398,6 +1405,12 @@ fn write_items(state: &AppState, items: &[SaveItem], dir: &str) -> Result<Vec<St
     if entries.is_empty() {
         return Err("selected entries no longer exist".into());
     }
+    // O destino vem da interface (pasta escolhida no diálogo): só grava em
+    // diretório que já existe, e nunca em cima de um arquivo.
+    let destino = std::path::Path::new(dir);
+    if !destino.is_dir() {
+        return Err("the destination folder does not exist".into());
+    }
     let mut written = Vec::new();
     for (idx, (format, entry, image)) in entries.iter().enumerate() {
         let ext = normalize_ext(format, entry);
@@ -1452,6 +1465,9 @@ fn save_many_to(
     items: Vec<SaveItem>,
     dir: String,
 ) -> Result<Vec<String>, String> {
+    if !cfg!(debug_assertions) {
+        return Err("save_many_to is a development-only command".into());
+    }
     let written = write_items(&state, &items, &dir)?;
     log(&format!("save_many_to n={} dir={dir}", written.len()));
     Ok(written)

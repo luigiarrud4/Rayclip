@@ -742,6 +742,7 @@ open(db,'rb').read()  # e contar ocorrências de
 | 0.1.7 | fix do clique dentro da janela (comparação pela janela raiz) |
 | 0.1.9 | renomear entrada (`Ctrl+E`) com edição inline, atalho configurável e ação no painel |
 | 0.1.11 | prévia das linhas no "Save N items" (miniatura na linha; primeira versão com tooltip) |
+| 0.1.27 | auditoria de colar/apagar/exportar: comandos de teste desligados em release, pasta de destino validada, o plano B por `curl` não grava mais arquivo temporário e a limpeza cobre os três restos |
 | 0.1.26 | auditoria de segurança: chave fail-closed (sem CSPRNG/DPAPI o banco não abre), OCR sem arquivo temporário, anti-SSRF na prévia de links, CSP fixa e asset protocol desligado |
 | 0.1.24 | atualização automática pelas releases do GitHub (`Settings → Updates`): confere o SHA-256 publicado, troca o exe por rename (o que roda nunca é sobrescrito), reabre passando o PID antigo, rollback se o novo não subir; `deploy.bat` publica a release com `rayclip.exe` + `.sha256` + instalador |
 | 0.1.23 | paridade com o Raycast no painel: reordenar fixados, editar conteúdo (`Ctrl+Shift+E`), copiar cor em HEX/RGB/HSL/HSV, apagar entradas recentes (5 min … 24 h) com confirmação e grupos de data "This Year"/"Older" |
@@ -834,6 +835,61 @@ legível em disco; clique seleciona / duplo clique cola; `Backspace` na busca n�
 apaga nada.
 
 Tabela completa de mais de 30 testes com resultados: ver `README.md`.
+### 8.34 v0.1.27 — auditoria dos caminhos de colar, apagar e exportar
+
+Segunda passada da revisão externa: `capture.rs`, `store.rs` e os comandos IPC de
+colagem, exclusão e exportação. O que estava certo já estava certo; o que faltava
+está aqui.
+
+**O que foi verificado e já estava correto**
+
+| Item | Situação |
+|---|---|
+| SQL em todo o `store`/`sqlite` | **nenhuma** query montada com `format!`: tudo por `?1`, `?2` (`db.run`/`db.query` com `&[Val]`). Sem injeção por título ou texto |
+| `open_url` | já aceitava só `http`/`https`/`mailto` e usa `shell_open` (sem `cmd /C start`, que interpretava `&`, `\|`, `%VAR%`) |
+| `reveal_path` | exige que o caminho **exista** antes de chamar o `explorer` e passa o argumento por `Command::arg` (sem shell) |
+| `file_stem` (nome do arquivo salvo) | tira `/\:*?"<>|` e caracteres de controle, corta em 45 bytes **em limite de UTF-8** (não entra em panic), remove `.`/`-`/espaço nas pontas (então `..` vira vazio) e escapa nomes reservados do Win32 (`CON`, `NUL`, `COM1`…). Sem traversal |
+| `write_entry_as` | só grava no caminho que o **diálogo do Windows** devolveu, ou no `unique_path()` (nunca sobrescreve: `nome 2.ext`) |
+| `paste_many` | guarda **8** sequências em `ignore_sequences`, então as cópias intermediárias da colagem múltipla não voltam como entradas novas; a colagem é serializada por `lock_paste()` |
+| Log (`%TEMP%\rayclip.log`) | não registra **conteúdo**, só ids, contagens, caminhos salvos e URLs |
+| Interface | nenhum `dangerouslySetInnerHTML` / `innerHTML`: todo texto do clipboard é renderizado como texto pelo React |
+
+**O que foi corrigido agora**
+
+1. **`save_image_to` e `save_many_to` são comandos de teste** — escrevem em
+   qualquer caminho recebido, sem diálogo. Em **release** agora recusam
+   (`"… is a development-only command"`); só a build de desenvolvimento aceita.
+   É defesa em profundidade: a interface nunca os chamou.
+2. **`write_items` exige que a pasta de destino exista e seja pasta** (antes um
+   `dir` inválido criava parte do caminho ou falhava item a item).
+3. **`curl_get` não grava mais arquivo temporário.** O plano B baixava a página
+   em `%TEMP%\rayclip-fetch-<pid>-<n>.out` — a página copiada (com o título e o
+   texto dela) ficava em claro no disco. Agora o corpo vem pelo **stdout** e o
+   `Content-Type` por uma marca final (`-w "\n__RAYCLIP_CT__%{content_type}"`),
+   separada pela última ocorrência (o HTML pode conter a marca). Teste
+   `separa_corpo_do_content_type` cobre exatamente esse caso.
+4. **`cleanup_temp()` cobre os três restos**: `rayclip-ocr-*` (PNG do OCR),
+   `rayclip-fetch-*.out` (página baixada) e `rayclip-thumb-*` (miniatura de
+   arquivo). Um crash no meio de qualquer um deles não deixa mais lixo para
+   sempre no `%TEMP%`.
+
+**Verificação (build 0.1.27)**
+
+| Verificação | Resultado |
+|---|---|
+| `cargo test --lib` | **35 passam** |
+| `save_many_to` em pasta real | 3 arquivos gravados, nomes saneados (`C Users Lugia KitLugia.txt`), sem sobrescrever |
+| `save_many_to` em pasta inexistente | `recusado: the destination folder does not exist` |
+| `save_image_to` em entrada sem imagem | recusa limpa (e em release recusa por ser comando de desenvolvimento) |
+| `%TEMP%` | **0** arquivos `rayclip-ocr-*`, `rayclip-fetch-*`, `rayclip-thumb-*` |
+| Release | `Rayclip_0.1.27_x64-setup.exe` |
+
+**O que continua sendo limite conhecido (e aceito):** "Salvar como…", "Copiar",
+"Salvar N itens" e a colagem existem exatamente para **tirar** o conteúdo do
+banco cifrado — por escolha do usuário, para um caminho escolhido no diálogo do
+Windows. Não há como isso ser secreto: o dado sai por definição. O que a auditoria
+garante é que ele só sai por ali, para onde o usuário apontou.
+
 ### 8.33 v0.1.26 — auditoria de segurança: falhar fechado
 
 Uma revisão externa do código (feita depois que o projeto foi para o GitHub)

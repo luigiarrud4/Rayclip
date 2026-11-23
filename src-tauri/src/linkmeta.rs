@@ -822,10 +822,11 @@ fn curl_get(url: &str, max: usize) -> Option<(String, Vec<u8>)> {
     use std::process::{Command, Stdio};
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
-    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let n = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let mut tmp = std::env::temp_dir();
-    tmp.push(format!("rayclip-fetch-{}-{n}.out", std::process::id()));
+    // A resposta vai pelo stdout, sem arquivo temporario: a pagina baixada
+    // (que pode ser a propria pagina que o usuario copiou) nao fica em claro
+    // em `%TEMP%` nem por um instante.
+    const MARCA: &str = "
+__RAYCLIP_CT__";
 
     // O curl e um processo separado: nao da para ver os saltos de um `-L`, entao
     // ele **nao segue redirecionamento** (e so fala http/https). Link encurtado
@@ -854,10 +855,8 @@ fn curl_get(url: &str, max: usize) -> Option<(String, Vec<u8>)> {
             "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "-H",
             "Accept-Language: pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
-            "-o",
-            &tmp.to_string_lossy(),
             "-w",
-            "%{content_type}",
+            &format!("{MARCA}%{{content_type}}"),
             url,
         ])
         .stdout(Stdio::piped())
@@ -866,14 +865,30 @@ fn curl_get(url: &str, max: usize) -> Option<(String, Vec<u8>)> {
         .creation_flags(CREATE_NO_WINDOW)
         .output()
         .ok()?;
-    let ct = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    let body = std::fs::read(&tmp).ok();
-    let _ = std::fs::remove_file(&tmp);
-    let body = body?;
-    if body.is_empty() {
+    // O corpo vem antes da marca; o tipo de conteudo vem depois dela.
+    let (corpo, ct) = match rfind(&out.stdout, MARCA.as_bytes()) {
+        Some(i) => (
+            out.stdout[..i].to_vec(),
+            String::from_utf8_lossy(&out.stdout[i + MARCA.len()..])
+                .trim()
+                .to_string(),
+        ),
+        None => (out.stdout.clone(), String::new()),
+    };
+    if corpo.is_empty() {
         return None;
     }
-    Some((ct, body.into_iter().take(max).collect()))
+    Some((ct, corpo.into_iter().take(max).collect()))
+}
+
+/// Última ocorrência de `needle` em `hay` (o corpo pode conter a marca).
+fn rfind(hay: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() || hay.len() < needle.len() {
+        return None;
+    }
+    (0..=hay.len() - needle.len())
+        .rev()
+        .find(|&i| hay[i..i + needle.len()] == *needle)
 }
 
 /// Página HTML: ureq primeiro (rápido, sem dependência); se o site recusar o
@@ -1089,6 +1104,24 @@ mod tests {
         for u in bons {
             assert!(url_permitida(u), "deveria aceitar {u}");
         }
+    }
+
+    /// O corpo do `curl_get` e separado da marca de content-type pela **ultima**
+    /// ocorrencia (uma pagina HTML pode conter o texto da marca).
+    #[test]
+    fn separa_corpo_do_content_type() {
+        let marca = b"
+__RAYCLIP_CT__";
+        let mut saida = b"<html>__RAYCLIP_CT__ nao sou eu</html>".to_vec();
+        saida.extend_from_slice(marca);
+        saida.extend_from_slice(b"text/html; charset=utf-8");
+        let i = rfind(&saida, marca).expect("marca presente");
+        assert_eq!(&saida[..i], b"<html>__RAYCLIP_CT__ nao sou eu</html>");
+        assert_eq!(
+            String::from_utf8_lossy(&saida[i + marca.len()..]).trim(),
+            "text/html; charset=utf-8"
+        );
+        assert!(rfind(b"sem marca", marca).is_none());
     }
 
     /// Classificacao de IP isolada (sem rede).

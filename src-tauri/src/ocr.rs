@@ -52,15 +52,19 @@ pub fn cleanup_temp() {
     let mut n = 0;
     for e in rd.flatten() {
         let name = e.file_name().to_string_lossy().to_string();
-        if name.starts_with("rayclip-ocr-")
-            && name.ends_with(".png")
-            && std::fs::remove_file(e.path()).is_ok()
-        {
+        // Restos de builds antigas: PNG do OCR (`rayclip-ocr-*`), pagina baixada
+        // pelo curl (`rayclip-fetch-*.out`) e miniatura de arquivo
+        // (`rayclip-thumb-*`). Um crash no meio de qualquer um deixaria o
+        // arquivo para sempre no `%TEMP%`.
+        let resto = name.starts_with("rayclip-ocr-") && name.ends_with(".png")
+            || name.starts_with("rayclip-fetch-") && name.ends_with(".out")
+            || name.starts_with("rayclip-thumb-") && name.ends_with(".png");
+        if resto && std::fs::remove_file(e.path()).is_ok() {
             n += 1;
         }
     }
     if n > 0 {
-        crate::log(&format!("ocr: {n} temporario(s) antigo(s) removido(s)"));
+        crate::log(&format!("limpeza: {n} temporario(s) antigo(s) removido(s)"));
     }
 }
 
