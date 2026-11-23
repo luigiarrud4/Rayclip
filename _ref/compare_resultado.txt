@@ -1,14 +1,14 @@
-harness rayclip x raycast — 23/11/2026 16:34
+harness rayclip x raycast — 23/11/2026 20:10
   rayclip: exe=rayclip.exe janela=NAO ENCONTRADA
   raycast: exe=raycast.exe janela=NAO ENCONTRADA
 
 [open] atalho -> janela visível (ms, mediana/min/max)
-  rayclip  14 / 13 / 14   [14, 13, 14, 13, 14]
-  raycast  19 / 19 / 22   [22, 19, 19, 19, 19]
+  rayclip  15 / 14 / 17   [17, 15, 15, 14, 14]
+  raycast  25 / 22 / 26   [26, 22, 25, 26, 25]
 
 [paste] Enter -> texto chega no alvo (ms, mediana/min/max)
-  rayclip  17 / 16 / 23   ok=5/5
-  raycast  14 / 13 / 15   ok=5/5
+  rayclip  23 / 21 / 29   ok=5/5
+  raycast  23 / 21 / 25   ok=5/5
 
 [capture] cópia -> item já disponível no histórico
   rayclip  30ms=ok 80ms=ok 150ms=ok 300ms=ok

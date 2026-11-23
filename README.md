@@ -467,6 +467,32 @@ fechava e nada era selecionado nem colado. Agora a comparação é pela **janela
 raiz** (`GetAncestor(GA_ROOT)`), que é sempre a nossa. Verificado: clique numa
 linha seleciona e atualiza o painel de detalhes; duplo clique cola e fecha.
 
+### Rayclip x Raycast: velocidade e ordem da busca
+
+Medido no mesmo Windows, cinco rodadas cada:
+
+| Medida | Rayclip | Raycast |
+|---|---|---|
+| Atalho → janela visível | **15 ms** | 25 ms |
+| Enter → texto chega no alvo | 23 ms | 23 ms |
+| Cópia → item já no histórico | ok em 30 ms | ok em 30 ms |
+
+E a ordem dos resultados com cinco textos contendo a mesma palavra rara, copiados
+do menos para o mais relevante:
+
+| Texto | Rayclip | Raycast |
+|---|---|---|
+| `qk4562` (exato) | **1º** | 5º |
+| `qk4562 beta` (prefixo) | **2º** | 4º |
+| `beta qk4562bum` | **3º** | 2º |
+| `beta qk4562` (começo de palavra) | 4º | 3º |
+| `xqk4562x` (meio, copiado por último) | 5º | **1º** |
+
+Repetindo com a ordem de cópia invertida, o Raycast inverteu junto: ele ordena
+**só por recência** — a busca filtra, não classifica. O Rayclip classifica
+(exato → prefixo → começo de palavra → meio) e usa a recência só como desempate.
+Isso é de propósito: quem digita a string inteira espera ela em primeiro.
+
 ### Rayclip x Raycast no mesmo Windows: senhas
 
 O simulador rodou também **contra o Raycast instalado**, buscando o prefixo único

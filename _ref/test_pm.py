@@ -12,7 +12,6 @@ import sys
 import time
 import uuid
 
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 
 TEMP = os.environ["TEMP"]
 BASE = os.path.join(TEMP, "pmtest", "base.exe")
@@ -110,5 +109,10 @@ def main():
     return 0 if not falhas else 1
 
 
+def _utf8():
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+
+
 if __name__ == "__main__":
+    _utf8()
     sys.exit(main())

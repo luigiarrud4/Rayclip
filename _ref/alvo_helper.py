@@ -91,7 +91,10 @@ def main():
         win_hwnd, None, cls.hInstance, None,
     )
     user32.ShowWindow(win_hwnd, 5)
-    sys.stderr.write("alvo pronto hwnd=%s edit=%s\n" % (win_hwnd, edit_hwnd))
+    # pythonw.exe nao tem stderr (sys.stderr is None): escrever sem checar
+    # derrubava o helper antes de qualquer medida.
+    if sys.stderr is not None:
+        sys.stderr.write("alvo pronto hwnd=%s edit=%s\n" % (win_hwnd, edit_hwnd))
 
     msg = ctypes.create_string_buffer(64)
     last_text = None

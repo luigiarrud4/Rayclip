@@ -15,7 +15,6 @@ import uuid
 from ctypes import wintypes as w
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 
 import harness_compare as h  # noqa: E402
 from PIL import ImageGrab  # noqa: E402
@@ -132,5 +131,10 @@ def main():
     print("PREFIXO:", prefixo)
 
 
+def _utf8():
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+
+
 if __name__ == "__main__":
+    _utf8()
     main()
