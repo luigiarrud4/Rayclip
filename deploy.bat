@@ -146,9 +146,7 @@ if not errorlevel 1 (
     goto :release_ok
 )
 
-gh release create "v!NEXT!" --repo %REPO% --target !TARGET_BRANCH%^
- --title "Rayclip v!NEXT!" --generate-notes^
- "!EXE!" "!HASHFILE!" "!SETUP!"
+gh release create "v!NEXT!" --repo %REPO% --target !TARGET_BRANCH! --title "Rayclip v!NEXT!" --generate-notes "!EXE!" "!HASHFILE!" "!SETUP!"
 if errorlevel 1 goto :release_falhou
 
 :release_ok
