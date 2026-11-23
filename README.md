@@ -467,6 +467,34 @@ fechava e nada era selecionado nem colado. Agora a comparação é pela **janela
 raiz** (`GetAncestor(GA_ROOT)`), que é sempre a nossa. Verificado: clique numa
 linha seleciona e atualiza o painel de detalhes; duplo clique cola e fecha.
 
+### Novidades da v0.1.28 — senhas: o filtro testado de verdade
+
+Não havia gerenciador de senha nesta máquina para testar o filtro, então ele foi
+**simulado**: `_ref/fake_pm.rs` (Rust puro, sem dependências) cria uma janela
+oculta para ser dono do clipboard, como um app real, e publica os marcadores que
+os apps usam. Compilado com `rustc` e renomeado para `Bitwarden.exe`,
+`1Password.exe`, `KeePassXC.exe`, `NordPass.exe`…
+
+**13 cenários, 13 certos:** os cinco nomes de gerenciador não entram no
+histórico; `bloco_de_notas.exe` entra; `ExcludeClipboardContentFromMonitorProcessing`,
+`Clipboard Viewer Ignore` e `CanIncludeInClipboardHistory = 0` bloqueiam mesmo
+vindo de um app comum; `CanIncludeInClipboardHistory = 1` não bloqueia; e com
+"Also capture passwords & protected content" ligado o conteúdo do gerenciador é
+guardado.
+
+Dois "fracassos" iniciais eram **do simulador**, não do app: `SetClipboardData(fmt, NULL)`
+é *rendering atrasado* e falha, então o marcador nem existia no clipboard. Do jeito
+que os apps fazem (um DWORD 1), passou sem tocar no Rayclip.
+
+Filtro ganhou `is_ignored_app()` (testável) e dois nomes genéricos — `"password"` e
+`"vaultwarden"` — que pegam `WindowsPasswordManager.exe` e `MeuPasswordVault.exe`
+sem pegar `notepad.exe`, `chrome.exe` ou `Code.exe`.
+
+**Limite medido:** se o app copia **sem janela**, o Windows não informa quem
+escreveu (`GetClipboardOwner` = NULL) e o nome não pode ser checado — nesse caso só
+o marcador protege. Testado: `Bitwarden.exe` sem janela e sem marcador **entra**;
+com o marcador, **não**. Na prática 1Password e Bitwarden fazem as duas coisas.
+
 ### Novidades da v0.1.27 — auditoria de colar, apagar e exportar
 
 Segunda passada, agora nos comandos IPC. O que já estava certo (SQL sempre com
@@ -480,7 +508,8 @@ como estava. O que faltava:
   build de desenvolvimento.
 - **A pasta de destino precisa existir** antes de "Salvar N itens" gravar nada.
 - **O plano B por `curl.exe` não grava mais arquivo temporário**: a página ia
-  para `%TEMP%ayclip-fetch-*.out` em claro. Agora o corpo vem pelo stdout e o
+  para `%TEMP%
+ayclip-fetch-*.out` em claro. Agora o corpo vem pelo stdout e o
   `Content-Type` por uma marca no fim (a marca é separada pela **última**
   ocorrência, porque o HTML pode contê-la).
 - **A limpeza de `%TEMP%` cobre os três restos** (`rayclip-ocr-*`,

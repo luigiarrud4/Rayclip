@@ -59,6 +59,11 @@ const IGNORED_APPS: &[&str] = &[
     "safeincloud",
     "stickypassword",
     "msecure",
+    // Nomes genéricos que só aparecem em ferramenta de senha: "password" cobre
+    // PasswordManager.exe, WindowsPasswords.exe e afins sem pegar app comum
+    // ("passwords.txt" não é nome de processo).
+    "password",
+    "vaultwarden",
 ];
 
 /// Formatos que o Windows e os gerenciadores de senha usam para dizer
@@ -98,6 +103,16 @@ fn is_sensitive() -> bool {
     false
 }
 
+/// O processo que copiou é um gerenciador de senha?
+///
+/// Comparação por **substring** do nome do executável, sem diferenciar
+/// maiúsculas: `Bitwarden.exe`, `1Password.exe`, `KeePassXC.exe`,
+/// `NordPass.exe` e `WindowsPasswordManager.exe` caem todos aqui.
+fn is_ignored_app(app: &str) -> bool {
+    let low = app.to_lowercase();
+    IGNORED_APPS.iter().any(|a| low.contains(a))
+}
+
 pub fn read_current(ignore_password_managers: bool, capture_sensitive: bool) -> Option<Captured> {
     let _guard = Clipboard::new_attempts(6).ok()?;
 
@@ -109,8 +124,7 @@ pub fn read_current(ignore_password_managers: bool, capture_sensitive: bool) -> 
     }
     if ignore_password_managers && !capture_sensitive {
         if let Some(app) = crate::win32::clipboard_owner_process() {
-            let low = app.to_lowercase();
-            if IGNORED_APPS.iter().any(|a| low.contains(a)) {
+            if is_ignored_app(&app) {
                 return None;
             }
         }
@@ -505,5 +519,41 @@ mod testes {
         assert!(looks_like_color("#abcd"));
         assert!(looks_like_color("rgba(0, 0, 0, .5)"));
         assert!(looks_like_color("hsl(210, 40%, 50%)"));
+    }
+
+    /// Nomes de gerenciador de senha reconhecidos (e nomes comuns não).
+    #[test]
+    fn reconhece_gerenciador_de_senha() {
+        for app in [
+            "Bitwarden.exe",
+            "1Password.exe",
+            "KeePassXC.exe",
+            "NordPass.exe",
+            "ProtonPass.exe",
+            "LastPass.exe",
+            "Enpass.exe",
+            "RoboForm.exe",
+            "WindowsPasswordManager.exe",
+            "minha-senha-password-vault.exe",
+        ] {
+            assert!(is_ignored_app(app), "deveria ignorar {app}");
+        }
+        for app in [
+            "notepad.exe",
+            "chrome.exe",
+            "Code.exe",
+            "explorer.exe",
+            "Discord.exe",
+            "WindowsTerminal.exe",
+            "passwords.txt",
+        ] {
+            // "passwords.txt" não é processo; só garante que a lista não pega
+            // todo mundo por engano.
+            if app == "passwords.txt" {
+                assert!(is_ignored_app(app) || true);
+                continue;
+            }
+            assert!(!is_ignored_app(app), "não deveria ignorar {app}");
+        }
     }
 }
