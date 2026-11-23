@@ -1,0 +1,22 @@
+# Build e dependências
+node_modules/
+dist/
+src-tauri/target/
+src-tauri/gen/
+*.exe
+*.dll
+*.pdb
+*.lib
+
+# Artefatos de build soltos
+_rayclip_tmp/
+*.log
+
+# Caches locais
+__pycache__/
+*.pyc
+
+# Sistema
+Thumbs.db
+desktop.ini
+.DS_Store

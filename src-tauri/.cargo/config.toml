@@ -1,0 +1,6 @@
+# O OpenSSL vendorizado (necessário para o SQLCipher) só precisa de Perl para
+# rodar o `Configure`. O Perl do Git Bash vem sem `Locale::Maketext` e
+# `Locale::Maketext::Simple` (módulos puros, do core do Perl), então eles ficam
+# vendorizados aqui para o build funcionar sem instalar nada no sistema.
+[env]
+PERL5LIB = { value = "vendor/perl/lib", relative = true }
