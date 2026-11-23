@@ -836,6 +836,90 @@ legível em disco; clique seleciona / duplo clique cola; `Backspace` na busca n�
 apaga nada.
 
 Tabela completa de mais de 30 testes com resultados: ver `README.md`.
+### 8.38 Latência de imagem, GIF animado e por que o console abortava a operação
+
+Três resultados e um conserto de app (v0.1.29).
+
+#### Latência de captura de imagem (`_ref/test_img.py`)
+
+Um PNG novo por rodada (conteúdo idêntico é deduplicado pelos dois apps),
+colado no formato que o navegador usa (**CF_DIB** montado à mão a partir de
+`BITMAPINFOHEADER` + BGR de baixo para cima), 5 rodadas cada:
+
+| App | Cópia → item no histórico (mediana) |
+|---|---|
+| **Rayclip** | **57 ms** (56–59) |
+| Raycast | 223 ms (213–228) |
+
+O Raycast sequer vê o DIB direto: ele grava `file-*.png` em
+`%LOCALAPPDATA%\Raycast\clipboard` (1294 arquivos, 375 MB) e indexa depois. Nós
+resolvemos a imagem em memória e gravamos uma vez no banco.
+
+#### GIF animado no painel de detalhes
+
+Método: dois prints da janela **400 ms** de distância, contando pixels com
+diferença forte (>90 somando RGB) e a caixa onde eles estão — se aparecerem
+milhares de pixels numa caixa quadrada, é o GIF trocando de quadro; se aparecer
+um risco fino no campo de busca, é só o cursor piscando.
+
+| Caso | Rayclip | Raycast |
+|---|---|---|
+| GIF copiado do navegador (formato cru `GIF`) | **anima** (54.061 px, caixa 240×240) | não medido com seleção confiável |
+| GIF copiado do Explorador (arquivo, `CF_HDROP`) | **anima** (55.557 px, caixa 240×240) — *depois do conserto* | **anima** (38.518 px, caixa 200×200) |
+
+**O que estava errado:** GIF copiado como **arquivo** entrava pelo caminho de
+"lista de arquivos", virava `kind: image` com `gif: false` e a prévia mostrava
+um quadro estático (o thumbnail do Windows). O Raycast anima nesse caso.
+
+**Conserto** (`capture.rs`): `gif_de_arquivo()` reconhece `*.gif` de até 20 MB
+que comece com `GIF8` e chama `monta_gif()`, o mesmo construtor do GIF que vem
+pelo clipboard — bytes crus no BLOB, poster do 1º quadro para a lista (GIF fora
+da seleção **não** anima), `hash` do conteúdo (o mesmo GIF vindo do navegador e
+do Explorador continua sendo **uma** entrada) e `paths` preservado, então
+"Revelar na pasta" segue funcionando. O antigo braço `Captured::Gif` passou a
+usar o mesmo construtor, sem duplicação.
+
+#### Por que o console abortava a operação (causa, não sintoma)
+
+`SendInput` manda a tecla para a **janela em foco**, seja ela qual for. Vários
+roteiros de teste mandavam `Esc`, `Alt+Espaço`, setas e texto **sem conferir o
+foco**: quando o app de destino não abria (ou já estava fechado), as teclas
+caíam no console que hospeda o agente — e `Esc`/`Alt+Espaço` ali cancelam a
+operação em curso. Era isso o "Command aborted"/"This operation was aborted"
+que parecia aleatório. Efeito colateral visível: o Raycast guardou no histórico
+dele o texto do próprio console ("Error: This operation was aborted…"), o que
+confirmou o diagnóstico.
+
+**Regra nova, em código (`_ref/keysafe.py`):**
+
+- `focar(hwnd)` usa `AttachThreadInput` + `SetForegroundWindow` + `SetFocus` e
+  **confirma** que o foco ficou na janela (o Windows bloqueia troca de foco
+  "roubada" quando o processo chamador não é o dono do foco).
+- `teclas_seguro(pid, …)` e `texto_seguro(pid, …)` só enviam se
+  `GetForegroundWindow` pertencer ao processo esperado; senão levantam erro e
+  **nada** é enviado.
+- Atalho global (o `Alt+Espaço`/`Ctrl+Shift+V` do Rayclip/Raycast) é enviado com
+  o foco numa **janela neutra do harness** (`RayclipHarnessAlvo`): ali um
+  `Ctrl+Shift+V` é um colar inofensivo e nunca chega no console.
+- Scripts que só precisam clicar usam CDP (`Input.dispatchMouseEvent`) — zero
+  teclado.
+
+Duas armadilhas menores do mesmo dia: `websocket.create_connection` precisa de
+`suppress_origin=True` neste WebView2 (senão o handshake é recusado com "Origin
+header is not a valid URL") e `cargo build --release` **não** embute o frontend —
+sobra `chrome-error://chromewebdata/` e todo `invoke` falha; para medir é preciso
+`npx tauri build --no-bundle`.
+
+**Release 0.1.29:** instalador `Rayclip_0.1.29_x64-setup.exe` (3.56 MiB),
+instalado e reaberto; CDP **fora** do build final (`grep -c remote-debugging` =
+0 e a porta 9222 responde "recusado" na instância instalada). Histórico de volta
+a **1680 entradas**, sem sobras de teste na tela; `cargo test --lib` **36/36**.
+
+**Arquivos:** `src-tauri/src/capture.rs` (`gif_de_arquivo`, `monta_gif`),
+`_ref/keysafe.py`, `_ref/test_gif4.py`, `_ref/test_gif5.py`,
+`_ref/test_gif_file.py`, `_ref/test_img.py`, `_ref/test_gif2.py` (marca
+aleatória por rodada, para o dedup não mascarar a medida).
+
 ### 8.37 Velocidade e ordem da busca: Rayclip x Raycast medidos no mesmo Windows
 
 Duas medições que faltavam, agora com número.

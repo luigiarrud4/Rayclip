@@ -44,8 +44,8 @@ CONJUNTOS = {
 user32 = ctypes.WinDLL("user32", use_last_error=True)
 
 
-def janelas(pid):
-    """Todas as janelas visiveis do processo, da maior para a menor."""
+def janelas(pid, so_visiveis=True):
+    """Todas as janelas do processo, da maior para a menor."""
     user32.EnumWindows.restype = w.BOOL
     achadas = []
     Cb = ctypes.WINFUNCTYPE(w.BOOL, w.HWND, w.LPARAM)
@@ -53,7 +53,7 @@ def janelas(pid):
     def cb(hwnd, _l):
         p = w.DWORD()
         user32.GetWindowThreadProcessId(hwnd, ctypes.byref(p))
-        if p.value == pid and user32.IsWindowVisible(hwnd):
+        if p.value == pid and (not so_visiveis or user32.IsWindowVisible(hwnd)):
             r = w.RECT()
             user32.GetWindowRect(hwnd, ctypes.byref(r))
             area = (r.right - r.left) * (r.bottom - r.top)

@@ -231,6 +231,85 @@ pub fn one_line(s: &str) -> String {
     out
 }
 
+/// Tamanho maximo de GIF lido do disco. Um GIF colado por engano nao pode
+/// encher o banco (o conteudo vai para o BLOB criptografado).
+const GIF_MAX: u64 = 20 * 1024 * 1024;
+
+/// GIF copiado como ARQUIVO (CF_HDROP, do Explorador): lido em memoria e guardado
+/// animado — o mesmo tratamento do GIF que chega no formato de clipboard "GIF".
+/// O Raycast tambem mantem a animacao nesse caso; guardar so o 1º quadro deixava
+/// a nossa previa estatica.
+fn gif_de_arquivo(path: &str) -> Option<Vec<u8>> {
+    let p = Path::new(path);
+    if p.extension()?.to_string_lossy().to_lowercase() != "gif" {
+        return None;
+    }
+    let meta = std::fs::metadata(p).ok()?;
+    if !meta.is_file() || meta.len() < 14 || meta.len() > GIF_MAX {
+        return None;
+    }
+    let raw = std::fs::read(p).ok()?;
+    if !raw.starts_with(b"GIF8") {
+        return None;
+    }
+    Some(raw)
+}
+
+/// Monta a entrada de um GIF animado (bytes crus + poster do 1º quadro).
+/// O poster e o que a LISTA mostra: GIF fora da seleção não anima.
+fn monta_gif(
+    raw: Vec<u8>,
+    title: String,
+    paths: Vec<String>,
+    source: Option<String>,
+    source_icon: Option<String>,
+    now: i64,
+) -> Option<Built> {
+    if raw.len() < 14 {
+        return None;
+    }
+    let w = u16::from_le_bytes([raw[6], raw[7]]) as u32;
+    let h = u16::from_le_bytes([raw[8], raw[9]]) as u32;
+    let mut poster: Option<Vec<u8>> = None;
+    if let Ok(frame) = image::load_from_memory(&raw) {
+        let small = frame.resize(320, 320, image::imageops::FilterType::Triangle);
+        let mut png = std::io::Cursor::new(Vec::new());
+        if small.write_to(&mut png, image::ImageFormat::Png).is_ok() {
+            poster = Some(png.into_inner());
+        }
+    }
+    let size = raw.len() as u64;
+    Some(Built {
+        entry: Entry {
+            id: uuid::Uuid::new_v4().to_string(),
+            kind: "image".to_string(),
+            title,
+            size_bytes: size,
+            // Hash do CONTEUDO: o mesmo GIF vindo do navegador e do Explorador
+            // e uma entrada so.
+            hash: crate::hash_bytes(&[&b"gif"[..], raw.as_slice()]),
+            text: None,
+            paths,
+            has_image: true,
+            image_width: Some(w),
+            image_height: Some(h),
+            source,
+            source_icon,
+            ocr_text: None,
+            has_thumb: poster.is_some(),
+            gif: true,
+            link: None,
+            html: None,
+            rtf: None,
+            created_at: now,
+            pinned: false,
+            pin_order: 0,
+        },
+        image: Some(raw),
+        thumb: poster,
+    })
+}
+
 fn file_kind(path: &str) -> &'static str {
     let ext = Path::new(path)
         .extension()
@@ -308,6 +387,16 @@ pub fn build_entry(
             })
         }
         Captured::Files(paths) => {
+            // GIF copiado do Explorador: guarda animado (igual ao clipboard).
+            if paths.len() == 1 {
+                if let Some(raw) = gif_de_arquivo(&paths[0]) {
+                    let nome = Path::new(&paths[0])
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_default();
+                    return monta_gif(raw, nome, vec![paths[0].clone()], source, source_icon, now);
+                }
+            }
             let kind = if paths.len() == 1 {
                 file_kind(&paths[0]).to_string()
             } else {
@@ -355,46 +444,8 @@ pub fn build_entry(
             })
         }
         Captured::Gif(raw) => {
-            let w = u16::from_le_bytes([raw[6], raw[7]]) as u32;
-            let h = u16::from_le_bytes([raw[8], raw[9]]) as u32;
-            // Poster estático (1º quadro): a lista usa ele, então GIFs fora da
-            // seleção não ficam animando e gastando CPU/GPU.
-            let mut poster: Option<Vec<u8>> = None;
-            if let Ok(frame) = image::load_from_memory(&raw) {
-                let small = frame.resize(320, 320, image::imageops::FilterType::Triangle);
-                let mut png = std::io::Cursor::new(Vec::new());
-                if small.write_to(&mut png, image::ImageFormat::Png).is_ok() {
-                    poster = Some(png.into_inner());
-                }
-            }
-            let size = raw.len() as u64;
-            Some(Built {
-                entry: Entry {
-                    id,
-                    kind: "image".to_string(),
-                    title: String::new(),
-                    size_bytes: size,
-                    hash: crate::hash_bytes(&[&b"gif"[..], raw.as_slice()]),
-                    text: None,
-                    paths: vec![],
-                    has_image: true,
-                    image_width: Some(w),
-                    image_height: Some(h),
-                    source,
-                    source_icon,
-                    ocr_text: None,
-                    has_thumb: poster.is_some(),
-                    gif: true,
-                    link: None,
-                    html: None,
-                    rtf: None,
-                    created_at: now,
-                    pinned: false,
-                    pin_order: 0,
-                },
-                image: Some(raw),
-                thumb: poster,
-            })
+            let _ = &id;
+            monta_gif(raw, String::new(), vec![], source, source_icon, now)
         }
         Captured::Image(bmp) => {
             let img = image::load_from_memory(&bmp).ok()?;

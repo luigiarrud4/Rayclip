@@ -513,6 +513,40 @@ copiou, então se o gerenciador não publicar o marcador o conteúdo entra no
 histórico dele. A decisão fica nossa, de propósito, e o interruptor "Also capture
 passwords & protected content" desliga o filtro quando você quiser.
 
+### Novidades da v0.1.29 — GIF copiado do Explorador anima, e as teclas de teste pararam de derrubar o console
+
+Um GIF colado do navegador já animava no painel de detalhes, mas o **mesmo GIF
+copiado como arquivo** (Ctrl+C no Explorador) virava quadro estático: a entrada
+nascia como `image` com `gif: false` e a prévia mostrava o thumbnail do Windows.
+Agora `gif_de_arquivo()` reconhece `*.gif` até 20 MB (assinatura `GIF8`) e chama o
+mesmo construtor do GIF que vem pelo clipboard: bytes crus guardados, poster do
+1º quadro para a lista, `hash` do conteúdo (o mesmo GIF das duas origens continua
+sendo **uma** entrada) e o caminho preservado, então "Revelar na pasta" segue
+funcionando.
+
+**Medido, dois prints a 400 ms de distância** (pixels com diferença forte):
+
+| Caso | Rayclip | Raycast |
+|---|---|---|
+| GIF do navegador | **anima** — 54.061 px, caixa 240×240 | — |
+| GIF do Explorador | **anima** — 55.557 px, caixa 240×240 | **anima** — 38.518 px, caixa 200×200 |
+
+E a captura de imagem, que ninguém tinha cronometrado: **57 ms** (mediana de 5)
+contra **223 ms** do Raycast — ele grava `file-*.png` no disco e indexa depois.
+
+### Por que os testes "abortavam" o console
+
+Nada de aleatório: `SendInput` entrega a tecla para a **janela em foco**. Vários
+roteiros mandavam `Esc`, `Alt+Espaço`, setas e texto **sem conferir o foco**;
+quando o app de destino não abria, as teclas caíam no console do agente — e
+`Esc`/`Alt+Espaço` ali cancelam a operação. O Raycast chegou a guardar o texto do
+próprio console no histórico dele, o que confirmou o diagnóstico.
+
+Agora `_ref/keysafe.py` só envia tecla depois de confirmar que o foco está no
+processo esperado (`AttachThreadInput` + `SetForegroundWindow` + checagem), e
+atalho global sai com o foco numa janela neutra do harness. Quem só precisa
+clicar usa CDP, sem teclado nenhum.
+
 ### Novidades da v0.1.28 — senhas: o filtro testado de verdade
 
 Não havia gerenciador de senha nesta máquina para testar o filtro, então ele foi

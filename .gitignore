@@ -26,3 +26,5 @@ _ref/alvo_cmd.txt
 _ref/alvo_state.txt
 _ref/alvo_err.txt
 _ref/compare_resultado.txt
+_ref/*_resultado.txt
+_ref/gif*_resultado.txt
