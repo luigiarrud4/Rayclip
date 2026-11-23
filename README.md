@@ -467,6 +467,26 @@ fechava e nada era selecionado nem colado. Agora a comparação é pela **janela
 raiz** (`GetAncestor(GA_ROOT)`), que é sempre a nossa. Verificado: clique numa
 linha seleciona e atualiza o painel de detalhes; duplo clique cola e fecha.
 
+### Rayclip x Raycast no mesmo Windows: senhas
+
+O simulador rodou também **contra o Raycast instalado**, buscando o prefixo único
+de cada cópia no histórico dele:
+
+| Cenário | Rayclip | Raycast (Windows) |
+|---|---|---|
+| Gerenciador de senha, texto puro | **não guarda** | **guarda** |
+| Qualquer app + `ExcludeClipboardContentFromMonitorProcessing` | não guarda | não guarda |
+| Qualquer app + `CanIncludeInClipboardHistory = 0` | não guarda | não guarda |
+| `CanIncludeInClipboardHistory = 1` | guarda | guarda |
+| App comum | guarda | guarda |
+| Cópia sem janela + marcador | não guarda | não guarda |
+
+Nas camadas de **marcador** os dois são idênticos. Na camada de **nome do
+processo** o Rayclip é mais restritivo: o Raycast para Windows não olha quem
+copiou, então se o gerenciador não publicar o marcador o conteúdo entra no
+histórico dele. A decisão fica nossa, de propósito, e o interruptor "Also capture
+passwords & protected content" desliga o filtro quando você quiser.
+
 ### Novidades da v0.1.28 — senhas: o filtro testado de verdade
 
 Não havia gerenciador de senha nesta máquina para testar o filtro, então ele foi
