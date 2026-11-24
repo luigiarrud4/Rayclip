@@ -408,6 +408,7 @@ fn lock_ignores(m: &Mutex<Vec<u32>>) -> std::sync::MutexGuard<'_, Vec<u32>> {
 /// o que furava qualquer decisão de "mostrar/esconder".
 static SHOWN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+
 fn set_shown(v: bool) {
     SHOWN.store(v, Ordering::SeqCst);
 }
@@ -1908,6 +1909,9 @@ fn show_window(app: &AppHandle) {
     // lento do AttachThreadInput.
     win32::allow_foreground_any();
     if let Some(win) = app.get_webview_window("main") {
+        // Medido com A/B: `win.show()` (abaixo) e um `ShowWindow` direto dão o
+        // mesmo tempo até a janela aparecer (2 ms, 5 de 5). Fica o caminho
+        // simples do Tauri — a versão "rápida" foi descartada por não ter ganho.
         let _ = win.show();
         let _ = win.set_always_on_top(true);
         if let Ok(h) = win.hwnd() {

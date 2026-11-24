@@ -513,6 +513,25 @@ copiou, então se o gerenciador não publicar o marcador o conteúdo entra no
 histórico dele. A decisão fica nossa, de propósito, e o interruptor "Also capture
 passwords & protected content" desliga o filtro quando você quiser.
 
+### Abertura a partir da bandeja: **2 ms** (o número anterior era do harness)
+
+`send_keys` dorme 12 ms entre apertar e soltar a tecla, e a medição começava
+antes desse respiro. O atalho global dispara no **key down**; medindo de lá
+(`send_down`/`send_up` novos no harness):
+
+| App | mediana |
+|---|---|
+| **Rayclip** | **2 ms** (2,2,2,2,2 — em duas rodadas) |
+| Raycast | 22–24 ms |
+
+Partindo do repouso na bandeja, a janela aparece em 2 ms — uma ordem de grandeza
+à frente.
+
+Tentei também trocar o `win.show()` do Tauri por `ShowWindow` direto (e tirar o
+`set_always_on_top` da abertura): **empate de 2 ms nos dois**, então as duas
+mudanças foram **revertidas**. Sem ganho medido, não fica — só o número do
+harness ficou honesto.
+
 ### Novidades da v0.1.31 — inicia na bandeja; `--open` abre na tela
 
 O app nasce **minimizado** (só o ícone na bandeja), que é o certo quando o

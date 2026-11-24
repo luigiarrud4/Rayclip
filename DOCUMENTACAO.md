@@ -836,6 +836,53 @@ legível em disco; clique seleciona / duplo clique cola; `Backspace` na busca n�
 apaga nada.
 
 Tabela completa de mais de 30 testes com resultados: ver `README.md`.
+### 8.42 Os "14 ms" eram do harness: medindo do key down, 2 ms x 22–24 ms
+
+A medida de abertura estava inflada **para os dois apps** pelo próprio harness:
+`send_keys` dorme 12 ms entre apertar e soltar a tecla, e o cronômetro começava
+antes desse respiro. O atalho global dispara no **key down**, então esses 12 ms
+não pertencem a ninguém.
+
+Agora existem `send_down` (devolve o instante do `SendInput`) e `send_up`:
+
+```python
+t0 = send_down(*cfg["hotkey"])   # mede daqui
+...                              # espera a janela ficar visível (poll 0,2 ms)
+send_up(*cfg["hotkey"])
+```
+
+| App | antes (com o respiro) | agora (do key down) |
+|---|---|---|
+| Rayclip | 14 ms | **2 ms** (2,2,2,2,2 — repetido em duas rodadas) |
+| Raycast | 21–23 ms | 22–24 ms |
+
+A conclusão anterior ("Rayclip ~10 ms mais rápido") estava subestimada: partindo
+do repouso na bandeja, a janela aparece em **2 ms**, contra 22–24 ms do Raycast —
+uma ordem de grandeza.
+
+#### A tentativa de otimizar o app: medida e descartada
+
+Hipótese: `win.show()` do Tauri despacha para a thread principal e o
+`ShowWindow` direto seria mais rápido (é o truque que o `hide_fast` já usa).
+Implementei `RAYCLIP_SHOW_LENTO` como chave de comparação e rodei os dois no
+mesmo build, 5 rodadas cada:
+
+| Caminho | mediana |
+|---|---|
+| `win.show()` (original) | **2 ms** (7,2,2,2,2) |
+| `ShowWindow` + `force_foreground` direto | **2 ms** (6,2,2,2,2) |
+
+Empate — e o mesmo vale para tirar o `set_always_on_top(true)` da abertura. As
+duas “otimizações” foram **revertidas** (mesma lição do §8.40): sem ganho medido,
+não fica. O `show_now` e a flag de A/B saíram do código.
+
+Os dois picos de 121/127 ms vistos na primeira rodada não reapareceram em
+nenhuma das quatro rodadas seguintes; parecem ser do aquecimento do WebView2
+logo depois de subir, não da abertura.
+
+**Sem release:** só o harness (`_ref/harness_compare.py`) e documentação
+mudaram; a v0.1.31 instalada é a mesma e já mede 2 ms.
+
 ### 8.41 Iniciar na bandeja e `--open` para abrir na tela (v0.1.31)
 
 Antes, `setup()` **sempre** fazia `win.show()` + `set_focus()`: quem abre o app no

@@ -260,6 +260,34 @@ def send_keys(*names, gap=0.012, forcar=False):
     return True
 
 
+def send_down(*names, forcar=False):
+    """Manda só o toque das teclas e devolve o instante do SendInput.
+
+    O atalho global dispara no **key down**; medir a partir daqui evita somar o
+    respiro do `send_keys` (12 ms) ao número do app.
+    """
+    ok, nome = foco_seguro()
+    if not ok and not forcar:
+        if ALVO_HWND:
+            import keysafe
+            keysafe.focar(ALVO_HWND, espera=0.25)
+            ok, nome = foco_seguro()
+        if not ok:
+            print(f"  aviso: foco em '{nome or '?'}' — teclas {names} NAO enviadas",
+                  flush=True)
+            return None
+    vks = [VK[n.lower()] if n.lower() in VK else ord(n.upper()) for n in names]
+    downs = (INPUT * len(vks))(*[_key(v, False) for v in vks])
+    user32.SendInput(len(vks), downs, ctypes.sizeof(INPUT))
+    return time.perf_counter()
+
+
+def send_up(*names):
+    vks = [VK[n.lower()] if n.lower() in VK else ord(n.upper()) for n in names]
+    ups = (INPUT * len(vks))(*[_key(v, True) for v in reversed(vks)])
+    user32.SendInput(len(vks), ups, ctypes.sizeof(INPUT))
+
+
 def click(hwnd):
     """Clique esquerdo de verdade no centro da janela (esconde por perda de foco)."""
     r = w.RECT()
@@ -468,13 +496,19 @@ def open_latency(alvo, name, runs=5):
         if not close_app(name, alvo):
             out.append(float("nan"))
             continue
-        t0 = time.perf_counter()
-        send_keys(*cfg["hotkey"])
+        # o atalho global dispara no key DOWN: medir daqui (antes o respiro de
+        # 12 ms do send_keys entrava no número)
+        t0 = send_down(*cfg["hotkey"])
+        if t0 is None:
+            send_up(*cfg["hotkey"])
+            out.append(float("nan"))
+            continue
         while (time.perf_counter() - t0) * 1000 < 3000:
             if visible(win_of(name)):
                 break
-            time.sleep(0.0005)
+            time.sleep(0.0002)
         out.append((time.perf_counter() - t0) * 1000)
+        send_up(*cfg["hotkey"])
         time.sleep(0.20)
     close_app(name, alvo)
     return [v for v in out if v == v]
