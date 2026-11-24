@@ -97,10 +97,13 @@ export const saveMany = (items: SaveItem[]) =>
  * entrega nome, tipo e os bytes em base64.
  */
 export const dragPayload = (id: string) =>
-  invoke<{ name: string; mime: string; data: string; text: string | null; link: boolean }>(
-    "drag_payload",
-    { id }
-  );
+  invoke<{
+    name: string;
+    mime: string;
+    data: string;
+    text: string | null;
+    link: boolean;
+  }>("drag_payload", { id });
 /** Marca o começo/fim do arrasto para a janela não esconder no meio. */
 export const dragStart = () => invoke<void>("drag_start");
 export const dragEnd = () => invoke<void>("drag_end");

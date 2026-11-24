@@ -204,7 +204,7 @@ struct DragPayload {
 
 /// Tamanho máximo que vira arrasto. Acima disso o arquivo não é lido: copiar
 /// centenas de MB para base64 travava a janela ("não respondendo").
-const MAX_ARRASTO: u64 = 32 * 1024 * 1024;
+const MAX_ARRASTO: u64 = 128 * 1024 * 1024;
 /// Texto oferecido como `text/plain` no arrasto.
 const MAX_ARRASTO_TEXTO: usize = 200_000;
 
@@ -272,11 +272,6 @@ fn monta_payload(
         .map(std::path::PathBuf::from)
         .filter(|p| p.is_file())
     {
-        let len = std::fs::metadata(&p).map_err(|e| e.to_string())?.len();
-        if len > MAX_ARRASTO {
-            crate::log(&format!("drag: {} grande demais ({len} bytes) - sem arrasto", stem));
-            return Err(format!("arquivo grande demais para arrastar ({len} bytes)"));
-        }
         // O arrasto de um arquivo do disco leva a extensão e o nome **do
         // arquivo** (um `.zip` continuava `.txt`, um `.png` virava `.txt`).
         if let Some(e) = p.extension().map(|e| e.to_string_lossy().to_lowercase()) {
@@ -306,11 +301,6 @@ fn monta_payload(
         // O Windows copia arquivos como `CF_HDROP` **e** texto com o caminho;
         // quando só o texto fica guardado, o arrasto ainda tem que entregar o
         // arquivo (era o caso do `.png` que virava `.txt`).
-        let len = std::fs::metadata(&arquivo).map_err(|e| e.to_string())?.len();
-        if len > MAX_ARRASTO {
-            crate::log(&format!("drag: {} grande demais ({len} bytes) - sem arrasto", stem));
-            return Err(format!("arquivo grande demais para arrastar ({len} bytes)"));
-        }
         if let Some(e) = arquivo.extension().map(|e| e.to_string_lossy().to_lowercase()) {
             if !e.is_empty() {
                 ext = e;
@@ -422,6 +412,8 @@ fn drag_start() {
 fn drag_end() {
     ARRASTANDO.store(false, Ordering::SeqCst);
 }
+
+
 
 #[tauri::command]
 fn get_settings(state: State<AppState>) -> settings::Settings {

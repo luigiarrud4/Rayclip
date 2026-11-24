@@ -18,6 +18,17 @@ for ($i = 0; $i -lt 20; $i++) {
     Start-Sleep -Milliseconds 150
 }
 
+# WebView2 órfo segura o user-data-dir (`%LOCALAPPDATA%\com.rayclip.app\EBWebView`)
+# e a instância nova fica **eternamente** dentro da criação da janela: sem log,
+# janela invisível, processo parado. Matar sempre antes de subir de novo.
+Get-CimInstance Win32_Process -Filter "Name='msedgewebview2.exe'" |
+    Where-Object {
+        $_.CommandLine -like '*com.rayclip.app*' -or
+        $_.CommandLine -like '*webview-exe-name=rayclip.exe*'
+    } |
+    ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+Start-Sleep -Milliseconds 400
+
 if (-not (Test-Path $exe)) {
     Write-Output "binario nao encontrado: $exe (build primeiro)"
     exit 1

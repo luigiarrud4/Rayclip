@@ -23,7 +23,13 @@ const OVERSCAN = 0.75;
  * pediria um payload diferente). A URL é `blob:`, não `data:` — um `data:` de
  * centenas de KB faz o Chromium cancelar o arrasto na hora.
  */
-type Arrasto = { name: string; mime: string; url: string; text: string | null; link: boolean };
+type Arrasto = {
+  name: string;
+  mime: string;
+  url: string;
+  text: string | null;
+  link: boolean;
+};
 
 /**
  * `true` enquanto um arrasto está em curso. A lista não pode ser re-renderizada
@@ -44,6 +50,18 @@ function blobUrl(base64: string, mime: string): string {
   const bytes = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i);
   return URL.createObjectURL(new Blob([bytes], { type: mime }));
+}
+
+/**
+ * Arquivo que já está no disco → `file:///` URL.
+ *
+ * Sem isso um `.zip` de 25 MB era lido inteiro, virado base64 e baixado de volta
+ * — sendo que o Explorer só precisa do caminho.
+ */
+function fileUrl(caminho: string): string {
+  // `encodeURI`: espaço/acento no nome invalida o `file:` e o Chromium cancela o
+  // arrasto no mesmo instante.
+  return "file:///" + encodeURI(caminho.replace(/\\/g, "/"));
 }
 
 /** Miniatura da linha: poster estático para GIF (não anima na lista). */
@@ -168,9 +186,9 @@ function EntryRow({
         void api.dragStart();
       }}
       onDragEnd={() => {
+        _arrastando = false;
         window.setTimeout(() => {
           arrastou.current = false;
-          _arrastando = false;
         }, 60);
         void api.dragEnd();
       }}

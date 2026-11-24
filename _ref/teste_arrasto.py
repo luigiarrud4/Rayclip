@@ -106,12 +106,33 @@ def main():
     if not exp:
         diz("sem janela do Explorer")
         return
+    # O Explorer pode vir minimizado (-32000,-32000) e aí o alvo do arrasto cai
+    # no vazio: restaurar e pôr num lugar fixo da tela.
+    user32.ShowWindow(exp, 9)  # SW_RESTORE
+    # À **direita** da janela do app (370..1270): com o Explorer por baixo do
+    # app, o ponto de soltura caía sobre a própria janela e nada era criado.
+    user32.SetWindowPos(exp, 0, 1290, 100, 620, 640, 0x0040)  # SWP_SHOWWINDOW
     time.sleep(1.5)
     er = rect(exp)
     diz(f"explorer 0x{exp:x} ({er.left},{er.top})-({er.right},{er.bottom})")
 
     subprocess.run(["taskkill", "/IM", "rayclip.exe", "/F"], capture_output=True)
     time.sleep(1.0)
+    # WebView2 órfão segura o user-data-dir e a instância nova fica **eternamente**
+    # criando a janela (sem log nenhum, janela invisível). Matar antes.
+    subprocess.run(
+        [
+            "powershell",
+            "-NoProfile",
+            "-Command",
+            "Get-CimInstance Win32_Process -Filter \"Name='msedgewebview2.exe'\" |"
+            " Where-Object { $_.CommandLine -like '*com.rayclip.app*' -or"
+            " $_.CommandLine -like '*webview-exe-name=rayclip.exe*' } |"
+            " ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }",
+        ],
+        capture_output=True,
+    )
+    time.sleep(0.7)
     # Uma única instância: abrir outra sinaliza a primeira e a página troca no
     # meio do teste (foi o que fez o arrasto "não acontecer" de vez em quando).
     subprocess.Popen(
@@ -191,7 +212,7 @@ def main():
     diz("botao preso; arrastando até o Explorer")
 
     # Lista de arquivos (o ponto que funcionou): centro horizontal, alto.
-    destino = ((er.left + er.right) // 2, er.top + 160)
+    destino = ((er.left + er.right) // 2, er.top + 300)
     for i in range(1, 25):
         entrada.mover(
             x + (destino[0] - x) * i // 24,
