@@ -836,6 +836,53 @@ legível em disco; clique seleciona / duplo clique cola; `Backspace` na busca n�
 apaga nada.
 
 Tabela completa de mais de 30 testes com resultados: ver `README.md`.
+### 8.46 Mutações devolvem 26 bytes em vez de 1,8 MB (v0.1.34)
+
+Última dívida do §8.44. `toggle_pin`, `move_pinned`, `update_entry_content`,
+`rename_entry`, `delete_entry`, `delete_entries`, `delete_recent` e
+`clear_entries` devolviam **o histórico inteiro** para a interface se
+atualizar. Depois da paginação a interface já pede a página de novo, então esse
+payload era só custo — 1,8 MB por clique em "fixar".
+
+Agora devolvem:
+
+```rust
+struct Mudanca { removed: usize, total: usize }   // 26 bytes
+```
+
+`removed` alimenta o aviso ("3 recent entries deleted") e `total` a contagem da
+lista; `delete_recent` deixou de precisar que a interface comparasse tamanhos.
+
+**Medido (build debug, CDP):**
+
+| Comando | resposta | tempo |
+|---|---|---|
+| `toggle_pin` (fixar) | `{removed:0,total:1683}` | **1,6 ms** |
+| `toggle_pin` (desfixar) | idem | 4,4 ms |
+| `delete_recent(0)` | `{removed:0,...}` | 1,8 ms |
+| `delete_entry` (id inexistente) | `{removed:0,...}` | 3,2 ms |
+| `delete_entries` (ids inexistentes) | `{removed:0,...}` | 2,9 ms |
+
+Antes: 1.846 KB, 33 ms só de serialização no log (`list: 1683 entradas...`), e a
+partir de ~87 ms de ponta a ponta na medição do §8.40. O `list:` sumiu do log
+depois de qualquer mutação.
+
+#### O bug que o teste pegou: **deadlock**
+
+A primeira versão chamava `mudanca(&state, n)` **de dentro** do bloco que
+segurava `lock_store(&state.store)` — e `mudanca()` chama `lock_store` de novo.
+O mutex do store **não é reentrante**: o app congelou e o `delete_recent` nunca
+respondeu (o CDP deu timeout, o log registrou a entrada e nada depois). Corrigido
+com `mudanca_com(removed, total)`, que recebe o total que já está na mão dentro
+do lock. Fixtures que testam mutação precisam ser rodadas **de verdade**: um
+teste que só compara tipos passaria com esse deadlock no lugar.
+
+**Testes:** 43 (`cargo test --lib`).
+
+**Release 0.1.34:** `Rayclip_0.1.34_x64-setup.exe` (3.57 MiB) instalado; inicia na
+bandeja; CDP fora (9222 recusada); publicada no GitHub com `rayclip.exe` +
+`rayclip.exe.sha256` + instalador.
+
 ### 8.45 Auto-updater verificado ponta a ponta (0.0.9 -> 0.1.33)
 
 A pergunta era "o auto-updater está funcionando?". Estava, mas nunca tinha sido

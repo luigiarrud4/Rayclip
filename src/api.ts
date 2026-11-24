@@ -22,20 +22,23 @@ export const pasteEntry = (id: string, plainText = false, keepOpen = false) =>
   invoke<void>("paste_entry", { id, plainText, keepOpen });
 export const copyEntry = (id: string, plainText = false) =>
   invoke<void>("copy_entry", { id, plainText });
-export const togglePin = (id: string) => invoke<Entry[]>("toggle_pin", { id });
+/// Resposta das mutações: antes vinha o histórico inteiro (1,8 MB por clique).
+export type Mudanca = { removed: number; total: number };
+
+export const togglePin = (id: string) => invoke<Mudanca>("toggle_pin", { id });
 export const movePinned = (id: string, up: boolean) =>
-  invoke<Entry[]>("move_pinned", { id, up });
+  invoke<Mudanca>("move_pinned", { id, up });
 export const updateEntryContent = (id: string, text: string) =>
-  invoke<Entry[]>("update_entry_content", { id, text });
+  invoke<Mudanca>("update_entry_content", { id, text });
 export const copyText = (text: string) => invoke<void>("copy_text", { text });
 export const deleteRecent = (minutes: number) =>
-  invoke<Entry[]>("delete_recent", { minutes });
+  invoke<Mudanca>("delete_recent", { minutes });
 export const renameEntry = (id: string, title: string) =>
-  invoke<Entry[]>("rename_entry", { id, title });
-export const deleteEntry = (id: string) => invoke<Entry[]>("delete_entry", { id });
-export const deleteEntries = (ids: string[]) => invoke<Entry[]>("delete_entries", { ids });
+  invoke<Mudanca>("rename_entry", { id, title });
+export const deleteEntry = (id: string) => invoke<Mudanca>("delete_entry", { id });
+export const deleteEntries = (ids: string[]) => invoke<Mudanca>("delete_entries", { ids });
 export const clearEntries = (keepPinned = true) =>
-  invoke<Entry[]>("clear_entries", { keepPinned });
+  invoke<Mudanca>("clear_entries", { keepPinned });
 export const ocrPending = () => invoke<number>("ocr_pending");
 export const linkPending = () => invoke<number>("link_pending");
 export const linkEntry = (id: string) => invoke<boolean>("link_entry", { id });

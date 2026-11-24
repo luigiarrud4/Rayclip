@@ -513,6 +513,20 @@ copiou, então se o gerenciador não publicar o marcador o conteúdo entra no
 histórico dele. A decisão fica nossa, de propósito, e o interruptor "Also capture
 passwords & protected content" desliga o filtro quando você quiser.
 
+### Novidades da v0.1.34 — fixar/renomear/apagar devolvem 26 bytes
+
+Os comandos de mutação (`toggle_pin`, `move_pinned`, `update_entry_content`,
+`rename_entry`, `delete_*`, `clear_entries`) devolviam **o histórico inteiro**
+para a interface se atualizar: 1,8 MB por clique em "fixar". Agora devolvem
+`{removed, total}` — 26 bytes, 1,6 a 4,4 ms, medido.
+
+O `removed` também deixou o aviso de "Delete Recent Entries…" mais honesto (antes
+a interface calculava comparando tamanhos da lista).
+
+De brinde, o teste pegou um **deadlock**: a primeira versão chamava o helper de
+resposta dentro do bloco que segurava o mutex do store (não reentrante) e o app
+congelava. Corrigido e re-testado nos cinco comandos.
+
 ### Novidades da v0.1.33 — busca no Rust (1,8 MB -> 158 KB por atualização)
 
 O app recebia **todo** o histórico a cada atualização (1.846 KB, 33 ms de

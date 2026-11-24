@@ -1685,10 +1685,37 @@ fn paste_entry(
     Ok(())
 }
 
+/// Resposta das mutações (fixar, renomear, editar, apagar).
+///
+/// Antes cada uma devolvia o histórico inteiro — 1,8 MB por clique. A interface
+/// não usa mais esse payload (ela pede a página de novo, §8.44); aqui vai só o
+/// que o aviso da tela precisa.
+#[derive(serde::Serialize)]
+struct Mudanca {
+    /// Quantas entradas saíram (0 quando a ação não apagou nada).
+    removed: usize,
+    /// Quantas continuam no histórico.
+    total: usize,
+}
+
+fn mudanca(state: &AppState, removed: usize) -> Mudanca {
+    let total = lock_store(&state.store).entries.len();
+    Mudanca { removed, total }
+}
+
+/// Mesma resposta, mas com o total que já está na mão **dentro** do lock.
+///
+/// Chamar `mudanca()` de dentro de `lock_store` trava tudo: o mutex do store não
+/// é reentrante (aconteceu de verdade no primeiro teste do §8.46 — o app
+/// congelou e o `delete_recent` nunca respondeu).
+fn mudanca_com(removed: usize, total: usize) -> Mudanca {
+    Mudanca { removed, total }
+}
+
 /// Renomeia uma entrada (título escolhido pelo usuário). O título só é
 /// derivado do conteúdo na captura/importação, então o nome dado aqui fica.
 #[tauri::command]
-fn rename_entry(_app: AppHandle, state: State<AppState>, id: String, title: String) -> Vec<Entry> {
+fn rename_entry(_app: AppHandle, state: State<AppState>, id: String, title: String) -> Mudanca {
     let clean: String = title.trim().chars().take(300).collect();
     {
         let mut store = lock_store(&state.store);
@@ -1704,23 +1731,21 @@ fn rename_entry(_app: AppHandle, state: State<AppState>, id: String, title: Stri
             ));
         }
     }
-    // A UI que chamou já recebe a lista: sem evento (evitava 2 listagens).
-    entries_now(&state)
+    mudanca(&state, 0)
 }
 
 #[tauri::command]
-fn toggle_pin(_app: AppHandle, state: State<AppState>, id: String) -> Vec<Entry> {
+fn toggle_pin(_app: AppHandle, state: State<AppState>, id: String) -> Mudanca {
     {
         let mut store = lock_store(&state.store);
         store.toggle_pin(&id);
     }
-    // A UI que chamou já recebe a lista: sem evento (evitava 2 listagens).
-    entries_now(&state)
+    mudanca(&state, 0)
 }
 
 /// Sobe (`up = true`) ou desce uma entrada dentro do grupo "Fixados".
 #[tauri::command]
-fn move_pinned(_app: AppHandle, state: State<AppState>, id: String, up: bool) -> Vec<Entry> {
+fn move_pinned(_app: AppHandle, state: State<AppState>, id: String, up: bool) -> Mudanca {
     {
         let mut store = lock_store(&state.store);
         let moved = store.move_pinned(&id, up);
@@ -1728,7 +1753,7 @@ fn move_pinned(_app: AppHandle, state: State<AppState>, id: String, up: bool) ->
             log(&format!("move_pinned {id} ignorado (nao fixado ou no limite)"));
         }
     }
-    entries_now(&state)
+    mudanca(&state, 0)
 }
 
 /// Troca o **conteúdo** de uma entrada (o título só muda se ainda era derivado
@@ -1739,7 +1764,7 @@ fn update_entry_content(
     state: State<AppState>,
     id: String,
     text: String,
-) -> Vec<Entry> {
+) -> Mudanca {
     {
         let mut store = lock_store(&state.store);
         let snap = match store.entries.iter_mut().find(|e| e.id == id) {
@@ -1763,7 +1788,7 @@ fn update_entry_content(
         }
     }
     notify_changed(&app);
-    entries_now(&state)
+    mudanca(&state, 0)
 }
 
 /// Escreve texto puro no clipboard (usado por "Copy Color as…" e afins).
@@ -1784,7 +1809,7 @@ fn copy_text(state: State<AppState>, text: String) -> Result<(), String> {
 /// Apaga as entradas **não fixadas** copiadas nos últimos `minutes` minutos
 /// ("Delete Recent Entries…" do Raycast, que nunca toca nos fixados).
 #[tauri::command]
-fn delete_recent(_app: AppHandle, state: State<AppState>, minutes: u32) -> Vec<Entry> {
+fn delete_recent(_app: AppHandle, state: State<AppState>, minutes: u32) -> Mudanca {
     let cutoff = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
@@ -1802,40 +1827,43 @@ fn delete_recent(_app: AppHandle, state: State<AppState>, minutes: u32) -> Vec<E
         for id in &doomed {
             store.remove(id);
         }
+        return mudanca_com(doomed.len(), store.entries.len());
     }
-    entries_now(&state)
 }
 
 #[tauri::command]
-fn delete_entry(_app: AppHandle, state: State<AppState>, id: String) -> Vec<Entry> {
+fn delete_entry(_app: AppHandle, state: State<AppState>, id: String) -> Mudanca {
     log(&format!("delete_entry id={id}"));
     {
         let mut store = lock_store(&state.store);
+        let existia = store.entries.iter().any(|e| e.id == id);
         store.remove(&id);
+        return mudanca_com(if existia { 1 } else { 0 }, store.entries.len());
     }
-    // A UI que chamou já recebe a lista: sem evento (evitava 2 listagens).
-    entries_now(&state)
 }
 
 /// Apaga várias entradas de uma vez (uma única travada do store e uma única
 /// listagem de volta — apagar 200 itens um a um custava 200 payloads).
 #[tauri::command]
-fn delete_entries(_app: AppHandle, state: State<AppState>, ids: Vec<String>) -> Vec<Entry> {
+fn delete_entries(_app: AppHandle, state: State<AppState>, ids: Vec<String>) -> Mudanca {
     log(&format!("delete_entries n={}", ids.len()));
     {
         let mut store = lock_store(&state.store);
+        let antes = store.entries.len();
         for id in &ids {
             store.remove(id);
         }
+        let saiu = antes - store.entries.len();
+        return mudanca_com(saiu, store.entries.len());
     }
-    entries_now(&state)
 }
 
 #[tauri::command]
-fn clear_entries(_app: AppHandle, state: State<AppState>, keep_pinned: bool) -> Vec<Entry> {
+fn clear_entries(_app: AppHandle, state: State<AppState>, keep_pinned: bool) -> Mudanca {
     log(&format!("clear_entries keep_pinned={keep_pinned}"));
     {
         let mut store = lock_store(&state.store);
+        let antes = store.entries.len();
         let kept: Vec<Entry> = store
             .entries
             .drain(..)
@@ -1843,9 +1871,9 @@ fn clear_entries(_app: AppHandle, state: State<AppState>, keep_pinned: bool) -> 
             .collect();
         store.entries = kept;
         store.save();
+        let saiu = antes - store.entries.len();
+        return mudanca_com(saiu, store.entries.len());
     }
-    // A UI que chamou já recebe a lista: sem evento (evitava 2 listagens).
-    entries_now(&state)
 }
 
 /// Texto integral de uma entrada (a lista manda só os primeiros 16 KB).

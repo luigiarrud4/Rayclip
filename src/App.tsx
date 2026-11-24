@@ -550,11 +550,12 @@ export default function App() {
     async (minutes: number) => {
       setConfirmRecent(null);
       try {
-        const next = await api.deleteRecent(minutes);
-        const removed = entries.length - next.length;
+        const res = await api.deleteRecent(minutes);
         await refresh();
-        setSelection((s) => s.filter((id) => next.some((e) => e.id === id)));
-        flash(t("{n} recent entries deleted", { n: removed }));
+        // Sem a lista inteira de volta, a seleção múltipla é limpa: os ids que
+        // saíram não podem continuar marcados.
+        setSelection([]);
+        flash(t("{n} recent entries deleted", { n: res.removed }));
       } catch (e) {
         report(
           "err",
