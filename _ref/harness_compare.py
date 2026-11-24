@@ -208,11 +208,48 @@ def _key(vk, up):
     return ev
 
 
-def send_keys(*names, gap=0.012):
+# O SendInput vai para a JANELA EM FOCO. Se o foco estiver no console que hospeda
+# o agente, Esc/Alt+Espaço cancelam a operação em curso (foi o que abortava as
+# rodadas longas). Só enviamos tecla quando o foco é de quem deveria receber.
+FOCOS_PERMITIDOS = {"rayclip.exe", "raycast.exe", "pythonw.exe", "python.exe"}
+
+
+def pid_em_foco():
+    h = user32.GetForegroundWindow()
+    if not h:
+        return 0
+    p = w.DWORD()
+    user32.GetWindowThreadProcessId(h, ctypes.byref(p))
+    return p.value
+
+
+def foco_seguro():
+    pid = pid_em_foco()
+    nome = proc_name(pid) if pid else ""
+    return nome in FOCOS_PERMITIDOS, nome
+
+
+# Janela neutra (alvo do harness). Se o foco estiver em algo estranho (console do
+# agente, por exemplo), o foco vai para ela antes de qualquer tecla: e uma janela
+# nossa, um "colar"/Esc ali nao faz nada.
+ALVO_HWND = None
+
+
+def send_keys(*names, gap=0.012, forcar=False):
     """Combinação inteira num SendInput, com um respiro entre apertar e soltar.
 
     Sem o respiro o WPF do Raycast às vezes não enxerga o Esc (o app dele fica
     aberto e a próxima medição sairia errada)."""
+    ok, nome = foco_seguro()
+    if not ok and not forcar:
+        if ALVO_HWND:
+            import keysafe
+            keysafe.focar(ALVO_HWND, espera=0.25)
+            ok, nome = foco_seguro()
+        if not ok:
+            print(f"  aviso: foco em '{nome or '?'}' — teclas {names} NAO enviadas",
+                  flush=True)
+            return False
     vks = [VK[n.lower()] if n.lower() in VK else ord(n.upper()) for n in names]
     downs = (INPUT * len(vks))(*[_key(v, False) for v in vks])
     ups = (INPUT * len(vks))(*[_key(v, True) for v in reversed(vks)])
@@ -220,6 +257,7 @@ def send_keys(*names, gap=0.012):
     if gap:
         time.sleep(gap)
     user32.SendInput(len(vks), ups, ctypes.sizeof(INPUT))
+    return True
 
 
 def click(hwnd):
@@ -314,9 +352,13 @@ class Alvo:
 
     @property
     def hwnd(self):
-        return find_window("python.exe", "RayclipHarnessAlvo") or find_window(
-            "python.exe", ""
-        )
+        # o helper pode ter subido como python.exe ou pythonw.exe (Tarefa
+        # Agendada usa pythonw) — tenta as duas formas pela classe da janela
+        for exe in ("pythonw.exe", "python.exe"):
+            h = find_window(exe, "RayclipHarnessAlvo")
+            if h:
+                return h
+        return find_window("pythonw.exe", "") or find_window("python.exe", "")
 
     def focus(self):
         self._send("focus")
@@ -392,10 +434,18 @@ def paste_via_search(name, alvo, marker, dt_from_enter=True):
 
 
 def close_app(name, alvo):
-    """Fecha o app de verdade: Esc e, se ele insistir, clique fora."""
+    """Fecha o app de verdade: Esc e, se ele insistir, clique fora.
+
+    O Esc tem que ir para a JANELA DO APP: com o foco na janela neutra do
+    harness (o normal aqui) o Esc nao fecha nada e todas as medidas seguintes
+    mediam um app que ja estava aberto — era o que zerava a coluna do Raycast.
+    """
+    import keysafe
     for _ in range(3):
-        if win_of(name) is None:
+        hwnd = win_of(name)
+        if hwnd is None:
             return True
+        keysafe.focar(hwnd, espera=0.3)
         send_keys("esc")
         time.sleep(0.28)
         if win_of(name) is None:
@@ -469,12 +519,16 @@ def fmt_ms(vals):
 
 
 def main():
+    global ALVO_HWND
     which = sys.argv[1] if len(sys.argv) > 1 else "all"
     try:
         alvo = Alvo()
     except RuntimeError as e:
         alvo = None
         print("aviso: %s — so a medida de abertura vai rodar" % e)
+    if alvo:
+        ALVO_HWND = alvo.hwnd  # propriedade, nao metodo
+        alvo.focus()
     linhas = []
 
     def say(s):
@@ -507,6 +561,11 @@ def main():
             res = capture_latency(alvo, name)
             txt = " ".join(f"{w}ms={'ok' if ok else 'NAO'}" for w, ok in res)
             say(f"  {name:8s} {txt}")
+
+    # deixa as duas janelas fechadas: quem roda depois (ou o usuario) nao
+    # encontra um app aberto por cima do trabalho
+    for name in APPS:
+        close_app(name, alvo)
 
     out = "_ref/compare_resultado.txt"
     with open(out, "w", encoding="utf-8") as f:

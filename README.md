@@ -513,6 +513,27 @@ copiou, então se o gerenciador não publicar o marcador o conteúdo entra no
 histórico dele. A decisão fica nossa, de propósito, e o interruptor "Also capture
 passwords & protected content" desliga o filtro quando você quiser.
 
+### Harness medindo os dois apps de ponta a ponta (v0.1.29, sem release)
+
+O `_ref/harness_compare.py all` voltou a fechar as três seções numa rodada:
+
+| Medida | Rayclip | Raycast |
+|---|---|---|
+| Atalho → janela visível | **14 ms** | 21 ms |
+| Enter → texto chega no alvo | 21 ms (5/5) | **19 ms** (5/5) |
+| Cópia → item no histórico | ok em 30 / 80 / 150 / 300 ms | idem |
+
+Três defeitos do harness, todos do mesmo tipo — tecla indo para o lugar errado:
+`send_keys` não olhava o foco (um `Esc` podia cair no console do agente e
+cancelar a operação); `Alvo.hwnd` procurava o helper como `python.exe` quando ele
+sobe como `pythonw.exe`, então "focalizar" não fazia nada; e `close_app` mandava
+`Esc` com o foco na janela neutra, ou seja, **não fechava o Raycast** — toda
+medida dele virava 3.001 ms de tempo esgotado e 0/5 colagens.
+
+Agora só sai tecla quando o foco é de quem deve receber (`foco_seguro()`), com
+fallback para a janela neutra do harness, e `close_app` foca a janela do app
+antes do `Esc`.
+
 ### Novidades da v0.1.29 — GIF copiado do Explorador anima, e as teclas de teste pararam de derrubar o console
 
 Um GIF colado do navegador já animava no painel de detalhes, mas o **mesmo GIF

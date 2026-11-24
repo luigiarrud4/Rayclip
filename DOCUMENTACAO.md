@@ -836,6 +836,49 @@ legível em disco; clique seleciona / duplo clique cola; `Backspace` na busca n�
 apaga nada.
 
 Tabela completa de mais de 30 testes com resultados: ver `README.md`.
+### 8.39 Harness completo numa rodada (e o que impedia o Raycast de ser medido)
+
+O `_ref/harness_compare.py all` agora roda **as três seções numa tacada só**, sem
+abortar o console e sem medir a coisa errada:
+
+| Medida | Rayclip | Raycast |
+|---|---|---|
+| Atalho → janela visível | **14 ms** (14–14) | 21 ms (14–22) |
+| Enter → texto chega no alvo | 21 ms (20–25), 5/5 | **19 ms** (17–22), 5/5 |
+| Cópia → item no histórico | ok em 30 / 80 / 150 / 300 ms | ok em 30 / 80 / 150 / 300 ms |
+
+Abertura ~7 ms na nossa frente, colagem empatada (a diferença de 2 ms anda de
+lado entre rodadas: já deu 23 x 23). O que valia mesmo era o harness voltar a
+medir os dois de ponta a ponta.
+
+**Três defeitos do harness, todos do mesmo tipo — tecla indo para o lugar errado:**
+
+1. `send_keys` mandava a combinação para **a janela em foco**, qualquer que
+   fosse. Sem trava, um `Esc` podia cair no console do agente e cancelar a
+   operação. Agora existe `foco_seguro()`: só envia se o foco for
+   `rayclip.exe`, `raycast.exe`, `pythonw.exe`/`python.exe` (o helper). Se não
+   for, o foco vai antes para a **janela neutra** do harness (`ALVO_HWND` +
+   `keysafe.focar`), e se ainda assim não der, a tecla **não** sai e fica
+   registrada no log.
+2. `Alvo.hwnd` procurava a janela do helper só como `python.exe`, mas a Tarefa
+   Agendada sobe `pythonw.exe` — devolvia `None`, e a “focalização” não
+   acontecia. Agora tenta as duas formas, primeiro pela classe
+   `RayclipHarnessAlvo`.
+3. `close_app` mandava `Esc` com o foco na janela neutra, então **não fechava
+   nada**: o Raycast já estava aberto e toda medida dele virava tempo esgotado
+   (3.001 ms de abertura, 0/5 colagens). Agora foca **a janela do app** antes do
+   `Esc`.
+
+Junto: o harness fecha as duas janelas no fim (não deixa app aberto em cima do
+trabalho) e as **72 entradas** de marcador (`hxXXXXXX`) que sobraram das rodadas
+foram apagadas — histórico de volta a **1680**.
+
+**Sem release:** só ferramenta de medição e documentação; a v0.1.29 instalada é
+a mesma.
+
+**Arquivos:** `_ref/harness_compare.py` (`foco_seguro`, `pid_em_foco`,
+`ALVO_HWND`, `Alvo.hwnd`, `close_app`, limpeza final).
+
 ### 8.38 Latência de imagem, GIF animado e por que o console abortava a operação
 
 Três resultados e um conserto de app (v0.1.29).
