@@ -513,6 +513,28 @@ copiou, então se o gerenciador não publicar o marcador o conteúdo entra no
 histórico dele. A decisão fica nossa, de propósito, e o interruptor "Also capture
 passwords & protected content" desliga o filtro quando você quiser.
 
+### Novidades da v0.1.32 — janela em branco não existe mais
+
+Se o renderer do WebView2 morre (crash, driver de vídeo, memória), antes o app
+ficava com um retângulo vazio para sempre: o processo vivo, o atalho abrindo, e
+nenhuma interface. Agora:
+
+- a página manda **heartbeat** a cada 3 s;
+- uma thread acorda a cada 5 s e, se a janela está na tela e a batida atrasou
+  mais de 15 s, chama `reload()`;
+- se duas tentativas não trouxerem a página de volta (o ambiente inteiro do
+  WebView2 morreu), o app **se reinicia** sozinho com a janela aberta.
+
+**Medido:** matando só o renderer → reload em ~15 s e o `heartbeat` volta **268 ms**
+depois, janela idêntica (média de pixel 20.8 antes e depois; janela morta mede
+0.0). Matando o ambiente inteiro → dois reloads, depois restart: pid novo e a
+interface de volta. No build de release o mesmo teste mantém o **mesmo pid** e a
+janela volta ao normal.
+
+Detalhe que causou um falso positivo no primeiro teste: `cargo build` **não
+embute o frontend**, então o exe rodava o bundle antigo sem heartbeat — para
+debug com frontend novo use `npx tauri build --debug --no-bundle`.
+
 ### Abertura a partir da bandeja: **2 ms** (o número anterior era do harness)
 
 `send_keys` dorme 12 ms entre apertar e soltar a tecla, e a medição começava

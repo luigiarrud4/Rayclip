@@ -408,6 +408,27 @@ fn lock_ignores(m: &Mutex<Vec<u32>>) -> std::sync::MutexGuard<'_, Vec<u32>> {
 /// o que furava qualquer decisão de "mostrar/esconder".
 static SHOWN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+/// Vigia do renderizador (§8.43). O WebView2 pode morrer (processo do renderer
+/// morto por falta de memória, driver de vídeo, crash) e a janela fica branca
+/// para sempre. Raycast 2.8 recarrega nesse caso; fazemos igual.
+///
+/// Como se detecta: a página manda `heartbeat` a cada 3 s. Se a janela está na
+/// tela há mais de 20 s e não chega batida há 15 s, o renderer não está
+/// executando JS — recarrega.
+static ULTIMO_BATIMENTO: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Quantos `reload()` já foram tentados sem a página voltar a dar sinal.
+static TENTATIVAS_RELOAD: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+#[tauri::command]
+fn heartbeat() {
+    ULTIMO_BATIMENTO.store(agora_ms(), Ordering::SeqCst);
+    if TENTATIVAS_RELOAD.load(Ordering::SeqCst) > 0 {
+        log("renderer voltou a responder heartbeat");
+    }
+    TENTATIVAS_RELOAD.store(0, Ordering::SeqCst);
+}
+
 
 fn set_shown(v: bool) {
     SHOWN.store(v, Ordering::SeqCst);
@@ -2615,6 +2636,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             list_entries,
+            heartbeat,
             compact_db,
             ocr_pending,
             link_pending,
@@ -2724,6 +2746,64 @@ pub fn run() {
                     set_shown(true);
                 } else {
                     log("inicio: janela na bandeja (use --open para abrir na tela)");
+                }
+
+                // Vigia do renderizador (§8.43): sem batida de heartbeat por
+                // 15 s com a janela na tela, recarrega a página em vez de
+                // deixar um retângulo branco para sempre.
+                ULTIMO_BATIMENTO.store(agora_ms(), Ordering::SeqCst);
+                {
+                    let app_vigia = app.handle().clone();
+                    std::thread::spawn(move || {
+                        let nascimento = agora_ms();
+                        loop {
+                        std::thread::sleep(std::time::Duration::from_secs(5));
+                        if !SHOWN.load(Ordering::SeqCst) {
+                            continue;
+                        }
+                        let agora = agora_ms();
+                        let ultimo = ULTIMO_BATIMENTO.load(Ordering::SeqCst);
+                        // 20 s de carência: o WebView2 pode levar segundos para
+                        // começar a rodar JS numa máquina carregada.
+                        let idade = agora.saturating_sub(nascimento);
+                        if idade < 20_000 || agora.saturating_sub(ultimo) < 15_000 {
+                            continue;
+                        }
+                        let parado = agora.saturating_sub(ultimo);
+                        let tentativa = TENTATIVAS_RELOAD.load(Ordering::SeqCst);
+                        // Duas tentativas de `reload()` cobrem o caso normal
+                        // (renderer morto). Se nem isso voltar, o ambiente
+                        // inteiro do WebView2 morreu — `reload()` não recria o
+                        // processo do navegador, então a saída é reiniciar o
+                        // app (uma vez, para não virar laço).
+                        if tentativa >= 2 {
+                            log(&format!(
+                                "renderer nao voltou apos {tentativa} reloads ({parado} ms) -> reiniciando o app"
+                            ));
+                            let exe = std::env::current_exe().ok();
+                            if let Some(exe) = exe {
+                                let _ = std::process::Command::new(exe)
+                                    .arg("--open")
+                                    .stdout(std::process::Stdio::null())
+                                    .stderr(std::process::Stdio::null())
+                                    .spawn();
+                            }
+                            std::process::exit(0);
+                        }
+                        log(&format!(
+                            "renderer morto: sem heartbeat ha {parado} ms -> reload ({})",
+                            tentativa + 1
+                        ));
+                        TENTATIVAS_RELOAD.fetch_add(1, Ordering::SeqCst);
+                        if let Some(w) = app_vigia.get_webview_window("main") {
+                            match w.reload() {
+                                Ok(()) => {}
+                                Err(e) => log(&format!("reload falhou: {e}")),
+                            }
+                        }
+                        ULTIMO_BATIMENTO.store(agora_ms(), Ordering::SeqCst);
+                        }
+                    });
                 }
             }
 

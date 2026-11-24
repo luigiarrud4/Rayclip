@@ -2,6 +2,10 @@ import { invoke } from "@tauri-apps/api/core";
 import type { Entry, SaveItem, Settings, UpdateInfo } from "./lib/types";
 
 export const listEntries = () => invoke<Entry[]>("list_entries");
+
+/// Batida do vigia do renderizador: se a página parar de mandar (renderer
+/// morto), o Rust recarrega em vez de deixar a janela branca.
+export const heartbeat = () => invoke<void>("heartbeat");
 export const entryText = (id: string) => invoke<string | null>("entry_text", { id });
 export const pasteEntry = (id: string, plainText = false, keepOpen = false) =>
   invoke<void>("paste_entry", { id, plainText, keepOpen });

@@ -247,6 +247,15 @@ export default function App() {
       ?.scrollIntoView({ block: "nearest" });
   }, [selectedId]);
 
+  // Batida para o vigia do renderizador (ver `heartbeat` no Rust).
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      void api.heartbeat().catch(() => {});
+    }, 3000);
+    void api.heartbeat().catch(() => {});
+    return () => window.clearInterval(id);
+  }, []);
+
   const [status, setStatus] = useState<Status | null>(null);
   const statusTimer = useRef<number | null>(null);
 

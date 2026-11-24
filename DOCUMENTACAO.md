@@ -836,6 +836,70 @@ legível em disco; clique seleciona / duplo clique cola; `Backspace` na busca n�
 apaga nada.
 
 Tabela completa de mais de 30 testes com resultados: ver `README.md`.
+### 8.43 Renderer do WebView2 morto: recarrega e, no pior caso, reinicia (v0.1.32)
+
+Última pendência da lista (item F). Se o processo do renderer do WebView2 morre
+(crash, driver de vídeo, memória), a janela fica **em branco para sempre** — o
+Rust continua vivo, o atalho abre, e não tem interface. Raycast 2.8 recarrega
+nesse caso.
+
+**Como se detecta** (não existe evento de morte na API do Tauri 2):
+
+- a página manda `heartbeat` a cada 3 s (`App.tsx` → `api.heartbeat()`);
+- `ULTIMO_BATIMENTO` guarda o instante da última batida;
+- uma thread no `setup` acorda a cada 5 s e só age se a janela está **na tela**
+  (`SHOWN`), o app tem mais de **20 s** de vida e a última batida tem mais de
+  **15 s**.
+
+Usar `SHOWN` de propósito: com a janela na bandeja o WebView2 estrangula timers
+e uma batida atrasada não significa renderer morto.
+
+**Escada de recuperação:**
+
+1. `reload()` (até 2 tentativas, 15 s de folga entre elas);
+2. se nem o reload trouxer sinal, o **ambiente inteiro** do WebView2 morreu —
+   `reload()` não recria o processo do navegador. Aí o app sobe uma cópia de si
+   mesmo com `--open` e faz `exit(0)`. Uma vez só, senão vira laço.
+
+**Medido (build debug, com log):**
+
+| Cenário | Log | Resultado |
+|---|---|---|
+| só o renderer morto | `renderer morto: sem heartbeat ha 16758 ms -> reload (1)` e **268 ms depois** `renderer voltou a responder heartbeat` | janela igual a antes (media 20.8, desvio 34.1) |
+| ambiente WebView2 inteiro morto | `reload (1)` 01:34:03, `reload (2)` 01:34:18, `renderer nao voltou apos 2 reloads (15002 ms) -> reiniciando o app` 01:34:33 | pid novo, janela volta com a interface |
+
+No build de release (sem log) o mesmo teste de matar o renderer deu **mesmo pid**
+e a janela de volta ao normal — a recuperação não depende do log.
+
+#### `_ref/shot_px.py` — medir “branco” por pixel
+
+`PrintWindow` com `PW_RENDERFULLCONTENT` + média/desvio do cinza:
+
+| Estado | media | desvio |
+|---|---|---|
+| interface de verdade | ~20.8 | ~34 |
+| janela morta / em branco | **0.0** | **0.0** |
+
+Isso provou duas coisas que o olho não provaria: a janela realmente ficou
+uniforme quando matei o renderer, e voltou idêntica depois do reload.
+
+#### Duas pegadinhas
+
+- **`cargo build` não embute o frontend.** O primeiro teste acusou falso
+  positivo (`renderer morto: sem heartbeat ha 20001 ms`) porque o exe de debug
+  servia o bundle **antigo**, sem o `heartbeat`. Para build de debug com log e
+  frontend novo: `npx tauri build --debug --no-bundle`.
+- Logo depois do restart automático a primeira captura deu `media 0.0` — era o
+  WebView2 ainda subindo, não falha. Medindo 5 s depois: 20.8.
+
+**Release 0.1.32:** `Rayclip_0.1.32_x64-setup.exe` (3.56 MiB) instalado; CDP fora
+(9222 recusada); inicia na bandeja; `cargo test --lib` 36/36. Publicada no GitHub
+com `rayclip.exe` + `rayclip.exe.sha256` + o instalador (é o par que o auto-updater
+consome).
+
+**Arquivos:** `src-tauri/src/lib.rs` (`heartbeat`, vigia, `TENTATIVAS_RELOAD`),
+`src/api.ts`, `src/App.tsx`, `_ref/shot_px.py`.
+
 ### 8.42 Os "14 ms" eram do harness: medindo do key down, 2 ms x 22–24 ms
 
 A medida de abertura estava inflada **para os dois apps** pelo próprio harness:
