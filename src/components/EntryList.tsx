@@ -154,6 +154,7 @@ export function EntryList({
   onContextMenu,
   renamingId,
   onRename,
+  onNearEnd,
   t,
 }: {
   buckets: Bucket[];
@@ -169,6 +170,8 @@ export function EntryList({
   query: string;
   isOcrHit?: (e: Entry) => boolean;
   onContextMenu: (id: string) => void;
+  /** Chamado quando a rolagem chega perto do fim (pede a próxima página). */
+  onNearEnd?: () => void;
   /** Id da entrada com o título em edição (ou `null`). */
   renamingId?: string | null;
   onRename: (id: string, title: string, cancel?: boolean) => void;
@@ -201,7 +204,17 @@ export function EntryList({
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
-    const onScroll = () => setScrollTop(el.scrollTop);
+    const onScroll = () => {
+      setScrollTop(el.scrollTop);
+      // Faltando 3 telas de rolagem para o fim: pede mais. O `loadMore` do App
+      // ignora o pedido se não houver mais nada ou se já estiver carregando.
+      if (
+        onNearEnd &&
+        el.scrollTop + el.clientHeight >= el.scrollHeight - el.clientHeight * 3
+      ) {
+        onNearEnd();
+      }
+    };
     el.addEventListener("scroll", onScroll, { passive: true });
     setScrollTop(el.scrollTop);
     setViewH(el.clientHeight || 480);
@@ -211,7 +224,7 @@ export function EntryList({
       el.removeEventListener("scroll", onScroll);
       ro.disconnect();
     };
-  }, [hasEntries]);
+  }, [hasEntries, onNearEnd]);
 
   // Mantém o item selecionado visível sem renderizar o histórico inteiro.
   useEffect(() => {

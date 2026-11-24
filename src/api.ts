@@ -3,6 +3,17 @@ import type { Entry, SaveItem, Settings, UpdateInfo } from "./lib/types";
 
 export const listEntries = () => invoke<Entry[]>("list_entries");
 
+/// Busca e filtro acontecem no Rust: a página recebe só o que vai aparecer.
+/// Antes vinham todas as entradas (1,8 MB) e o filtro era feito aqui.
+export type BuscaPagina = { items: Entry[]; total: number; ms: number };
+export const searchEntries = (
+  query: string,
+  filter: string,
+  offset = 0,
+  limit = 200
+) =>
+  invoke<BuscaPagina>("search_entries", { query, filter, offset, limit });
+
 /// Batida do vigia do renderizador: se a página parar de mandar (renderer
 /// morto), o Rust recarrega em vez de deixar a janela branca.
 export const heartbeat = () => invoke<void>("heartbeat");

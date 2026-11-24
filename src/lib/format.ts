@@ -142,11 +142,18 @@ export function matchesFilter(e: Entry, filter: string): boolean {
   }
 }
 
+/**
+ * Busca: o **Rust** decide (§8.44, `search.rs`); estas duas funções ficaram como
+ * referência das regras e para o selo "só OCR" na lista. Por isso usam `title`
+ * cru e não o rótulo sintético "Image (data)" — o Rust não tem como montar esse
+ * rótulo (ele muda com o idioma) e procurar "image" casando com toda imagem era
+ * ruído.
+ */
 export function matchesQuery(e: Entry, query: string): boolean {
   if (!query.trim()) return true;
   const q = fold(query);
   return (
-    fold(displayTitle(e)).includes(q) ||
+    fold(e.title ?? "").includes(q) ||
     fold(e.text ?? "").includes(q) ||
     fold((e.paths ?? []).join(" ")).includes(q) ||
     fold(e.source ?? "").includes(q) ||
@@ -159,7 +166,7 @@ export function matchedOnlyInOcr(e: Entry, query: string): boolean {
   const q = fold(query.trim());
   if (!q || !e.ocrText) return false;
   const visible =
-    fold(displayTitle(e)).includes(q) ||
+    fold(e.title ?? "").includes(q) ||
     fold(e.text ?? "").includes(q) ||
     fold((e.paths ?? []).join(" ")).includes(q) ||
     fold(e.source ?? "").includes(q);

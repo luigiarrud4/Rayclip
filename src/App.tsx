@@ -11,7 +11,7 @@ import { ImageViewer } from "./components/ImageViewer";
 import { ConfirmDialog } from "./components/ConfirmDialog";
 import { EditContentDialog } from "./components/EditContentDialog";
 import * as api from "./api";
-import { groupEntries, matchesFilter, matchesQuery, matchedOnlyInOcr, mediaUrl, rankEntries } from "./lib/format";
+import { groupEntries, matchedOnlyInOcr, mediaUrl } from "./lib/format";
 import { DEFAULT_IN_APP_KEYS } from "./lib/types";
 import { keycaps, matchAccel, matchAccelLoose } from "./lib/keys";
 import { colorFormats } from "./lib/color";
@@ -38,6 +38,12 @@ import {
 import type { Entry, FilterId, Status, UpdateInfo } from "./lib/types";
 import { makeT, type Lang } from "./lib/i18n";
 
+/**
+ * Entradas por página. A busca e o filtro rodam no Rust (8.44), então a página
+ * recebe só isso em vez das 1,8 MB de todo o histórico.
+ */
+const PAGE = 200;
+
 /** Janelas de tempo do "Delete Recent Entries…" (mesmas do Raycast). */
 const RECENT_MINUTES = [5, 15, 30, 60, 1440];
 
@@ -56,6 +62,8 @@ function recentWhenLabel(min: number, t: (s: string, v?: Record<string, string |
 
 export default function App() {
   const [entries, setEntries] = useState<Entry[]>([]);
+  /** Quantos itens casam no total (vem do Rust); `entries` é só a página. */
+  const [total, setTotal] = useState(0);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<FilterId>("all");
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -112,11 +120,58 @@ export default function App() {
   }, []);
 
 
-  const refresh = useCallback(async (keepSelection = true) => {
-    const next = await api.listEntries();
-    setEntries(next);
-    setSelectedId((cur) => (keepSelection && cur && next.some((e) => e.id === cur) ? cur : next[0]?.id ?? null));
-  }, []);
+  // Parâmetros atuais da consulta num ref: `refresh` precisa ser estável (entra
+  // em vários `useEffect`) mas tem de enxergar a busca do momento.
+  const consulta = useRef({ query: "", filter: "all" });
+  consulta.current = { query, filter: filter as string };
+
+  /**
+   * Carrega a primeira página da busca atual.
+   *
+   * Mantém a seleção: se a entrada selecionada não estiver na primeira página
+   * (histórico grande e algo antigo selecionado), pede as páginas seguintes até
+   * achá-la — perder a seleção ao reabrir a janela estava fora de questão.
+   */
+  const refresh = useCallback(
+    async (keepSelection = true) => {
+      const { query: q, filter: f } = consulta.current;
+      const sel = selectedId;
+      const page = await api.searchEntries(q, f, 0, PAGE);
+      let items = page.items;
+      if (keepSelection && sel && !items.some((e) => e.id === sel)) {
+        for (let i = 1; i < 3 && items.length < page.total; i++) {
+          const next = await api.searchEntries(q, f, i * PAGE, PAGE);
+          if (next.items.length === 0) break;
+          items = [...items, ...next.items];
+          if (items.some((e) => e.id === sel)) break;
+        }
+      }
+      setEntries(items);
+      setTotal(page.total);
+      setSelectedId((cur) =>
+        keepSelection && cur && items.some((e) => e.id === cur) ? cur : items[0]?.id ?? null
+      );
+    },
+    [selectedId]
+  );
+
+  /** Próxima página, pedida quando a rolagem chega perto do fim. */
+  const carregando = useRef(false);
+  const loadMore = useCallback(async () => {
+    if (carregando.current || entries.length >= total) return;
+    carregando.current = true;
+    try {
+      const { query: q, filter: f } = consulta.current;
+      const page = await api.searchEntries(q, f, entries.length, PAGE);
+      setEntries((cur) => {
+        const tem = new Set(cur.map((e) => e.id));
+        return [...cur, ...page.items.filter((e) => !tem.has(e.id))];
+      });
+      setTotal(page.total);
+    } finally {
+      carregando.current = false;
+    }
+  }, [entries.length, total]);
 
   // Uma cópia dispara 2–3 eventos (novo item, OCR, link). Recarrega uma vez só.
   const pending = useRef<number | null>(null);
@@ -127,6 +182,24 @@ export default function App() {
       void refresh();
     }, 140);
   }, [refresh]);
+
+  // Digitar/filtrar = nova consulta no Rust. 90 ms de debounce: tecla rápida
+  // não vira 10 idas e voltas, e mesmo assim a lista acompanha o texto.
+  const refreshAtual = useRef(refresh);
+  refreshAtual.current = refresh;
+  const primeiraConsulta = useRef(true);
+  useEffect(() => {
+    if (primeiraConsulta.current) {
+      primeiraConsulta.current = false;
+      return;
+    }
+    const id = window.setTimeout(() => {
+      // `false`: com busca nova a seleção cai no primeiro resultado, que é o
+      // comportamento do Raycast (e dá Enter para colar o mais provável).
+      void refreshAtual.current(false);
+    }, 90);
+    return () => window.clearTimeout(id);
+  }, [query, filter]);
 
   useEffect(() => {
     void refresh(false);
@@ -179,16 +252,15 @@ export default function App() {
     };
   }, [cfg]);
 
-  const visible = useMemo(() => {
-    const base = entries.filter((e) => matchesFilter(e, filter) && matchesQuery(e, query));
-    // Buscando: ordem por relevância (texto antes de OCR, fixado, exato, recência).
-    return rankEntries(base, query);
-  }, [entries, filter, query]);
+  // O Rust já devolveu filtrado e ordenado (§8.44): aqui só agrupamos por data
+  // quando não há busca. Filtrar de novo daria resultado diferente — as regras
+  // de ordenação são as mesmas, mas o conjunto carregado é só uma página.
+  const visible = entries;
   // Com busca, um bloco único em ordem de relevância; sem busca, as datas do Raycast.
   const buckets = useMemo(
     () =>
-      query.trim() ? [{ label: "", entries: visible }] : groupEntries(visible, t),
-    [visible, query, t]
+      query.trim() ? [{ label: "", entries }] : groupEntries(entries, t),
+    [entries, query, t]
   );
   const flat = useMemo(() => buckets.flatMap((b) => b.entries), [buckets]);
   const selected = useMemo(
@@ -437,7 +509,8 @@ export default function App() {
       if (!cur) return;
       setEditing(null);
       try {
-        setEntries(await api.updateEntryContent(cur.id, text));
+        await api.updateEntryContent(cur.id, text);
+        await refresh();
         flash(t("Entry saved"));
       } catch (e) {
         report(
@@ -479,7 +552,7 @@ export default function App() {
       try {
         const next = await api.deleteRecent(minutes);
         const removed = entries.length - next.length;
-        setEntries(next);
+        await refresh();
         setSelection((s) => s.filter((id) => next.some((e) => e.id === id)));
         flash(t("{n} recent entries deleted", { n: removed }));
       } catch (e) {
@@ -510,7 +583,8 @@ export default function App() {
       const clean = title.trim();
       if (cancel || !clean) return;
       try {
-        setEntries(await api.renameEntry(id, clean));
+        await api.renameEntry(id, clean);
+        await refresh();
         flash(t("Renamed"));
       } catch {
         report("err", t("Could not rename"));
@@ -563,8 +637,8 @@ export default function App() {
       setConfirmIds(null);
       if (ids.length === 0) return;
       try {
-        const next = await api.deleteEntries(ids);
-        setEntries(next);
+        await api.deleteEntries(ids);
+        await refresh();
         setSelection([]);
         setPanelOpen(false);
         flash(
@@ -586,8 +660,8 @@ export default function App() {
     async (id: string | null | undefined) => {
       if (!id) return;
       try {
-        const next = await api.deleteEntry(id);
-        setEntries(next);
+        await api.deleteEntry(id);
+        await refresh();
         setPanelOpen(false);
         setSelection((s) => s.filter((x) => x !== id));
         flash(t("Entry deleted"));
@@ -784,7 +858,8 @@ export default function App() {
         icon: <PinIcon size={15} />,
         keys: keycaps(K.pin),
         run: async () => {
-          setEntries(await api.togglePin(selected.id));
+          await api.togglePin(selected.id);
+          await refresh();
           setPanelOpen(false);
         },
       },
@@ -799,7 +874,8 @@ export default function App() {
           icon: <ArrowUpIcon size={15} />,
           keys: ["Ctrl", "⇧", "↑"],
           run: async () => {
-            setEntries(await api.movePinned(selected.id, true));
+            await api.movePinned(selected.id, true);
+            await refresh();
             setPanelOpen(false);
           },
         },
@@ -809,7 +885,8 @@ export default function App() {
           icon: <ArrowDownIcon size={15} />,
           keys: ["Ctrl", "⇧", "↓"],
           run: async () => {
-            setEntries(await api.movePinned(selected.id, false));
+            await api.movePinned(selected.id, false);
+            await refresh();
             setPanelOpen(false);
           },
         }
@@ -927,7 +1004,8 @@ export default function App() {
         keys: keycaps(K.clearAll),
         danger: true,
         run: async () => {
-          setEntries(await api.clearEntries(true));
+          await api.clearEntries(true);
+          await refresh();
           setPanelOpen(false);
           flash(t("History cleared"));
         },
@@ -993,7 +1071,8 @@ export default function App() {
         (e.key === "ArrowUp" || e.key === "ArrowDown")
       ) {
         e.preventDefault();
-        setEntries(await api.movePinned(selected.id, e.key === "ArrowUp"));
+        await api.movePinned(selected.id, e.key === "ArrowUp");
+        await refresh();
         return;
       }
 
@@ -1032,7 +1111,8 @@ export default function App() {
         else void paste(selected?.id, e.shiftKey, false);
       } else if (matchAccel(e, K.clearAll)) {
         e.preventDefault();
-        setEntries(await api.clearEntries(true));
+        await api.clearEntries(true);
+          await refresh();
       } else if (matchAccel(e, K.delete)) {
         e.preventDefault();
         // Seleção múltipla apaga todas as marcadas — e isso pede confirmação.
@@ -1052,7 +1132,8 @@ export default function App() {
         void startEdit(selected);
       } else if (matchAccel(e, K.pin) && selected) {
         e.preventDefault();
-        setEntries(await api.togglePin(selected.id));
+        await api.togglePin(selected.id);
+        await refresh();
       } else if (matchAccel(e, K.copyText) && selected?.ocrText) {
         e.preventDefault();
         void api.copyOcrText(selected.id).then(() => flash(t("Image text copied")));
@@ -1138,9 +1219,10 @@ export default function App() {
             onActivate={(id) => void paste(id)}
             onPaste={(id) => void paste(id)}
             hasEntries={visible.length > 0}
-            totalEntries={entries.length}
+            totalEntries={total}
             query={query}
             isOcrHit={(e) => matchedOnlyInOcr(e, query)}
+            onNearEnd={() => void loadMore()}
             onContextMenu={openActionsFor}
             renamingId={renamingId}
             onRename={(id, title, cancel) => void commitRename(id, title, cancel)}

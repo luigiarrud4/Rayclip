@@ -6,6 +6,7 @@ mod import;
 mod key;
 mod linkmeta;
 mod ocr;
+mod search;
 mod settings;
 mod sqlite;
 mod store;
@@ -267,6 +268,11 @@ fn system_status(state: State<AppState>, force: Option<bool>) -> serde_json::Val
 const LIST_TEXT_MAX: usize = 4 * 1024;
 
 /// Corta uma string em `max` **bytes** sem quebrar caractere UTF-8.
+/// Versão pública do corte por caracteres (usada por `search.rs`).
+pub fn cut_utf8_pub(s: &str, max: usize) -> &str {
+    cut_utf8(s, max)
+}
+
 fn cut_utf8(s: &str, max: usize) -> &str {
     if s.len() <= max {
         return s;
@@ -980,6 +986,99 @@ fn import_raycast(
 #[tauri::command]
 fn list_entries(state: State<AppState>) -> Vec<Entry> {
     entries_now(&state)
+}
+
+/// Filtro + busca + paginação **no Rust** (§8.44).
+///
+/// Antes a página levava todas as entradas (1,8 MB, ~33 ms de serialização a
+/// cada atualização) e filtrava em JS. Aqui só sai o que vai aparecer, e a
+/// projeção (`html`/`rtf` fora, texto cortado) é feita apenas nos casados.
+#[tauri::command]
+fn search_entries(
+    state: State<AppState>,
+    query: Option<String>,
+    filter: Option<String>,
+    offset: Option<usize>,
+    limit: Option<usize>,
+) -> Result<serde_json::Value, String> {
+    let t0 = std::time::Instant::now();
+    let q = query.unwrap_or_default();
+    let f = filter.unwrap_or_else(|| "all".to_string());
+    let off = offset.unwrap_or(0);
+    let lim = limit.unwrap_or(200).clamp(1, 2000);
+
+    let store = lock_store(&state.store);
+    let db = store.db().ok_or_else(|| "banco nao esta aberto".to_string())?;
+    // Ordenação de origem (fixados na mão, depois recência) vinda do banco.
+    let mut base: Vec<Entry> = store
+        .entries
+        .iter()
+        .filter(|e| search::matches_filter(e, &f))
+        .map(projeta_entry)
+        .collect();
+    drop(db);
+    drop(store);
+
+    base.sort_by(|a, b| {
+        b.pinned.cmp(&a.pinned).then_with(|| {
+            if a.pinned {
+                a.pin_order.cmp(&b.pin_order)
+            } else {
+                b.created_at.cmp(&a.created_at)
+            }
+        })
+    });
+
+    let (itens, total) = search::filtrar(base, &q, &f, off, lim);
+    let bytes = serde_json::to_string(&itens).map(|s| s.len()).unwrap_or(0);
+    log(&format!(
+        "busca: q={:?} filtro={} offset={} -> {} de {} itens, {} KB, {} ms",
+        q,
+        f,
+        off,
+        itens.len(),
+        total,
+        bytes / 1024,
+        t0.elapsed().as_millis()
+    ));
+    Ok(serde_json::json!({
+        "items": itens,
+        "total": total,
+        "ms": t0.elapsed().as_millis(),
+    }))
+}
+
+/// Projeção enxuta de uma entrada para a lista (a mesma do `entries_now`).
+fn projeta_entry(e: &Entry) -> Entry {
+    Entry {
+        id: e.id.clone(),
+        kind: e.kind.clone(),
+        title: e.title.clone(),
+        text: e
+            .text
+            .as_deref()
+            .map(|t| cut_utf8(t, LIST_TEXT_MAX).to_string()),
+        paths: e.paths.clone(),
+        has_image: e.has_image,
+        image_width: e.image_width,
+        image_height: e.image_height,
+        source: e.source.clone(),
+        source_icon: e.source_icon.clone(),
+        ocr_text: e
+            .ocr_text
+            .as_deref()
+            .map(|t| cut_utf8(t, LIST_TEXT_MAX).to_string()),
+        has_thumb: e.has_thumb,
+        gif: e.gif,
+        link: e.link.clone(),
+        html: None,
+        rtf: None,
+        size_bytes: e.size_bytes,
+        created_at: e.created_at,
+        pinned: e.pinned,
+        pin_order: e.pin_order,
+        hash: e.hash.clone(),
+    }
 }
 
 /// Compacta o banco (`VACUUM`): reescreve o arquivo sem as páginas livres que
@@ -2636,6 +2735,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             list_entries,
+            search_entries,
             heartbeat,
             compact_db,
             ocr_pending,
@@ -2752,6 +2852,28 @@ pub fn run() {
                 // 15 s com a janela na tela, recarrega a página em vez de
                 // deixar um retângulo branco para sempre.
                 ULTIMO_BATIMENTO.store(agora_ms(), Ordering::SeqCst);
+
+                // Aquece o cache da busca (dobra dos campos): sem isso a
+                // primeira tecla digitada paga ~200 ms dobrando 1.683 entradas.
+                // Roda em thread própria e em prioridade abaixo do normal.
+                {
+                    let app_aquece = app.handle().clone();
+                    std::thread::spawn(move || {
+                        if let Some(st) = app_aquece.try_state::<AppState>() {
+                            let copia = {
+                                let store = lock_store(&st.store);
+                                store.entries.clone()
+                            };
+                            let t0 = std::time::Instant::now();
+                            search::aquecer(&copia);
+                            log(&format!(
+                                "busca: cache aquecido ({} entradas) em {} ms",
+                                copia.len(),
+                                t0.elapsed().as_millis()
+                            ));
+                        }
+                    });
+                }
                 {
                     let app_vigia = app.handle().clone();
                     std::thread::spawn(move || {

@@ -513,6 +513,27 @@ copiou, então se o gerenciador não publicar o marcador o conteúdo entra no
 histórico dele. A decisão fica nossa, de propósito, e o interruptor "Also capture
 passwords & protected content" desliga o filtro quando você quiser.
 
+### Novidades da v0.1.33 — busca no Rust (1,8 MB -> 158 KB por atualização)
+
+O app recebia **todo** o histórico a cada atualização (1.846 KB, 33 ms de
+serialização) e filtrava na página. Agora o filtro, a ordenação e a paginação
+acontecem no Rust: a página leva 200 itens (158 KB, 4–5 ms) e pede a próxima
+quando a rolagem chega perto do fim.
+
+| | antes | agora |
+|---|---|---|
+| payload por atualização | 1.846 KB | **158 KB** |
+| serialização | 33 ms | **4–5 ms** |
+| busca digitada | — | 198 ms -> **8 ms** (com cache aquecido) |
+
+As regras de ordem são as mesmas de antes (texto antes de OCR, fixados primeiro,
+exato > início > começo de palavra > meio, recência no empate) e têm teste
+próprio. Mudança deliberada: o rótulo sintético `Image (data)` saiu da busca —
+casar "image" com toda imagem era ruído.
+
+Dívida anotada: `toggle_pin`, `delete_*` e `rename_entry` ainda devolvem o
+histórico inteiro por IPC; a interface ignora o payload e repede a página.
+
 ### Novidades da v0.1.32 — janela em branco não existe mais
 
 Se o renderer do WebView2 morre (crash, driver de vídeo, memória), antes o app
