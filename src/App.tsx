@@ -125,6 +125,11 @@ export default function App() {
   const consulta = useRef({ query: "", filter: "all" });
   consulta.current = { query, filter: filter as string };
 
+  // A seleção também vem de um ref, e não do fechamento: `refresh` precisa ser
+  // **estável** para não recriar o efeito de montagem a cada clique (§8.47).
+  const selecionadoRef = useRef<string | null>(null);
+  selecionadoRef.current = selectedId;
+
   /**
    * Carrega a primeira página da busca atual.
    *
@@ -135,7 +140,7 @@ export default function App() {
   const refresh = useCallback(
     async (keepSelection = true) => {
       const { query: q, filter: f } = consulta.current;
-      const sel = selectedId;
+      const sel = selecionadoRef.current;
       const page = await api.searchEntries(q, f, 0, PAGE);
       let items = page.items;
       if (keepSelection && sel && !items.some((e) => e.id === sel)) {
@@ -152,7 +157,10 @@ export default function App() {
         keepSelection && cur && items.some((e) => e.id === cur) ? cur : items[0]?.id ?? null
       );
     },
-    [selectedId]
+    // De propósito vazio: a busca e a seleção entram por ref. Com `[selectedId]`
+    // cada clique recriava esta função e o efeito de montagem (`[refresh, t]`)
+    // rodava `refresh(false)` de novo, devolvendo a seleção ao primeiro item.
+    []
   );
 
   /** Próxima página, pedida quando a rolagem chega perto do fim. */

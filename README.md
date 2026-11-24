@@ -513,6 +513,18 @@ copiou, então se o gerenciador não publicar o marcador o conteúdo entra no
 histórico dele. A decisão fica nossa, de propósito, e o interruptor "Also capture
 passwords & protected content" desliga o filtro quando você quiser.
 
+### Novidades da v0.1.35 — clique seleciona de novo
+
+O v0.1.33 (busca no Rust) deixou um `useCallback` dependendo da seleção. Como
+esse `refresh` estava nas dependências do efeito de montagem, **cada clique
+recriava a função, o efeito rodava de novo e devolvia a seleção para o primeiro
+item** — clicar, Ctrl+clique, Shift+clique e as setas não seguravam a seleção.
+
+De brinde, isso também causava uma **tempestade de buscas** (~24 ms entre uma e
+outra) enquanto a janela estivesse aberta: 1,8 MB/s de IPC e CPU à toa. Agora
+`refresh` é estável e lê a seleção de um ref; o log passou de dezenas de buscas
+para 4 em 8 segundos.
+
 ### Novidades da v0.1.34 — fixar/renomear/apagar devolvem 26 bytes
 
 Os comandos de mutação (`toggle_pin`, `move_pinned`, `update_entry_content`,
