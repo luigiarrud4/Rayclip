@@ -886,6 +886,41 @@ que foi embarcado: `npx tauri build` compilou o mesmo `dist/` verificado no debu
 lista de dependências de um efeito de montagem. Se a função precisa "ver" o
 estado atual, leia de um ref e mantenha as dependências vazias.
 
+### 8.48 O clique sempre funcionou: `SendInput` mudo é que enganava o teste
+
+Depois do §8.47 a janela continuava "se escondendo" em todo clique sintético, e
+o log dizia `click-hook: hide (pid=… class=Chrome_RenderWidgetHostHWND)` — o que
+dava a entender que o app se fechava ao clicar dentro dele. A causa não estava
+no app: **nenhum clique ou tecla era entregue**.
+
+As `structs` de `INPUT`/`MOUSEINPUT`/`KEYBDINPUT` do harness eram escritas à mão
+sem a **união** que existe no C. Resultado: `sizeof(INPUT)` = **32** em vez de
+**40** bytes. `SendInput` valida o tamanho, recusa a chamada e devolve **0** — e
+ninguém olhava o retorno. O app "se escondia" porque o foco ia para o console do
+agente e o clique nunca acontecia.
+
+**Conserto (`_ref/entrada.py`):** união explícita
+(`_UNIAO = MOUSEINPUT | KEYBDINPUT | HARDWAREINPUT`), com
+`assert sizeof(INPUT) == 40` e `assert sizeof(MOUSEINPUT) == 32`, e `_enviar()`
+que **levanta erro** quando `SendInput != 1`. Expõe `clicar(x, y)` e `tecla(vk)`;
+todo teste passa a usar isso em vez de structs inline.
+
+**Prova com entrada de verdade (cliques e teclas do Windows, build debug):**
+
+| Ação | Resultado |
+|---|---|
+| seta ↓ / ↓ / ↑ | seleção `e9c16c56` → `78d27958` → `39e66175` → `78d27958` |
+| digitar `x` | campo de busca `''` → `'x'` |
+| clique nas linhas 2, 4 e 6 | seleciona a linha clicada (CDP, `data-selected`) |
+
+Ou seja: clique, Ctrl+clique, Shift+clique e setas funcionam — o defeito real era
+só o do §8.47, e o v0.1.35 publicado já o corrige.
+
+**Lição:** struct de `ctypes` para API C com união **tem** que declarar a união, e
+toda chamada `SendInput` precisa conferir o retorno. Um teste que não falha alto
+quando a entrada não é entregue produz diagnósticos falsos — e foi o que
+aconteceu aqui por horas.
+
 ### 8.46 Mutações devolvem 26 bytes em vez de 1,8 MB (v0.1.34)
 
 Última dívida do §8.44. `toggle_pin`, `move_pinned`, `update_entry_content`,
