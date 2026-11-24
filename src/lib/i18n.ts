@@ -320,6 +320,15 @@ Object.assign(PT, {
   "Apply now": "Aplicar agora",
   "Restarts Explorer (open File Explorer windows close)":
     "Reinicia o Explorer (janelas do Explorador abertas fecham)",
+  "Compact database": "Compactar banco",
+  "Rewrites the database file without the free pages left behind by deletions":
+    "Reescreve o arquivo do banco sem as páginas livres deixadas pelas exclusões",
+  "This only reclaims disk space: deleted entries were already zeroed inside the encrypted file (secure_delete). Freeing a page does not prove the old bytes are gone from the SSD, and nothing here can promise that.":
+    "Isto só devolve espaço em disco: as entradas apagadas já foram zeradas dentro do arquivo cifrado (secure_delete). Liberar uma página não prova que os bytes antigos saíram do SSD, e nada aqui promete isso.",
+  "Compact now": "Compactar agora",
+  "Compacting…": "Compactando…",
+  "Database compacted — {a} to {b}": "Banco compactado — {a} para {b}",
+  "Compact failed — {msg}": "Falha ao compactar — {msg}",
   "Restart Explorer": "Reiniciar o Explorer",
   "Explorer restarted": "Explorer reiniciado",
   "Restart failed — {msg}": "Falha ao reiniciar — {msg}",

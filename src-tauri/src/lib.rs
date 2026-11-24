@@ -496,6 +496,9 @@ fn run_ocr_for(app: AppHandle, id: String) {
         return;
     }
     std::thread::spawn(move || {
+        // Indexar imagem é trabalho de fundo: fica abaixo do normal para não
+        // roubar CPU da janela enquanto o usuário rola o histórico.
+        win32::thread_below_normal();
         let Some(_slot) = acquire_job(20_000) else {
             return;
         };
@@ -955,6 +958,31 @@ fn import_raycast(
 #[tauri::command]
 fn list_entries(state: State<AppState>) -> Vec<Entry> {
     entries_now(&state)
+}
+
+/// Compacta o banco (`VACUUM`): reescreve o arquivo sem as páginas livres que
+/// sobraram de exclusões.
+///
+/// Isso devolve **espaço em disco** — não é "apagar para sempre". Com
+/// `secure_delete = ON` as páginas apagadas já foram zeradas; o que sobra é
+/// arquivo grande demais, não conteúdo.
+#[tauri::command]
+fn compact_db(state: State<AppState>) -> Result<serde_json::Value, String> {
+    let caminho = {
+        let store = lock_store(&state.store);
+        store.db_file()
+    };
+    let antes = std::fs::metadata(&caminho).map(|m| m.len()).unwrap_or(0);
+    {
+        let store = lock_store(&state.store);
+        let db = store
+            .db()
+            .ok_or_else(|| "banco nao esta aberto".to_string())?;
+        db.exec("VACUUM").map_err(|e| format!("vacuum: {e}"))?;
+    }
+    let depois = std::fs::metadata(&caminho).map(|m| m.len()).unwrap_or(0);
+    log(&format!("compact_db: {antes} -> {depois} bytes"));
+    Ok(serde_json::json!({ "before": antes, "after": depois }))
 }
 
 fn copy_entry_inner(
@@ -2576,6 +2604,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             list_entries,
+            compact_db,
             ocr_pending,
             link_pending,
             link_entry,

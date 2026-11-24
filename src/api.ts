@@ -59,6 +59,9 @@ export const raycastImportCount = () => invoke<number>("raycast_import_count");
 /** Importa o histórico do Raycast para o banco cifrado. Devolve o total. */
 export const importRaycast = (path?: string) =>
   invoke<number>("import_raycast", { path: path ?? null });
+/** Reclama espaço no arquivo do banco (`VACUUM`). Devolve o tamanho antes/depois. */
+export const compactDb = () =>
+  invoke<{ before: number; after: number }>("compact_db");
 export const pasteMany = (ids: string[], plainText: boolean, keepOpen: boolean) =>
   invoke<number>("paste_many", { ids, plainText, keepOpen });
 export const saveImageAs = (id: string, format: string) =>

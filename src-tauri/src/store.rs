@@ -229,6 +229,11 @@ impl Store {
         self.db.clone()
     }
 
+    /// Caminho do arquivo do banco (para medir o tamanho antes/depois do VACUUM).
+    pub fn db_file(&self) -> PathBuf {
+        self.dir.join(DB_FILE)
+    }
+
     /// Pasta de mídia derivada (favicon, capa de link, ícone de app). Não é
     /// conteúdo do clipboard — o conteúdo fica no banco.
     pub fn media_dir(&self) -> PathBuf {

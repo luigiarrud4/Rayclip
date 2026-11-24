@@ -6,6 +6,7 @@ import { CheckIcon } from "../lib/icons";
 import { Dropdown } from "./Dropdown";
 import { ACCENTS, THEMES, applyTheme, setOsTransparency } from "../lib/theme";
 import { LANGUAGES, type Lang, type T } from "../lib/i18n";
+import { formatBytes } from "../lib/format";
 
 type Section =
   | "preferences"
@@ -162,6 +163,7 @@ export function SettingsPage({
   // Importação do histórico do Raycast.
   const [raycastCount, setRaycastCount] = useState<number | null>(null);
   const [importing, setImporting] = useState<{ done: number; total: number } | null>(null);
+  const [compacting, setCompacting] = useState(false);
   const [toast, setToast] = useState<{ text: string; kind: "ok" | "err" } | null>(null);
   // Atualização: a release já encontrada em segundo plano chega por prop.
   const [release, setRelease] = useState<UpdateInfo | null>(availableUpdate ?? null);
@@ -712,6 +714,44 @@ export function SettingsPage({
                       : t("Import {n} items", { n: raycastCount })}
               </button>
             </Field>
+            <Field
+              title={t("Compact database")}
+              desc={t(
+                "Rewrites the database file without the free pages left behind by deletions"
+              )}
+            >
+              <button
+                type="button"
+                className="btn"
+                disabled={compacting}
+                onClick={() => {
+                  setCompacting(true);
+                  void api
+                    .compactDb()
+                    .then((r) => {
+                      setCompacting(false);
+                      void api.systemStatus(true).then(setSys);
+                      onSaved(
+                        t("Database compacted — {a} to {b}", {
+                          a: formatBytes(r.before),
+                          b: formatBytes(r.after),
+                        })
+                      );
+                    })
+                    .catch((e) => {
+                      setCompacting(false);
+                      onSaved(t("Compact failed — {msg}", { msg: String(e) }), "err");
+                    });
+                }}
+              >
+                {compacting ? t("Compacting…") : t("Compact now")}
+              </button>
+            </Field>
+            <div className="settings-hint">
+              {t(
+                "This only reclaims disk space: deleted entries were already zeroed inside the encrypted file (secure_delete). Freeing a page does not prove the old bytes are gone from the SSD, and nothing here can promise that."
+              )}
+            </div>
             <div className="settings-hint">
               {t(
                 "Raycast keeps its own database locked with a DPAPI key, but it also writes each item as a file in %LOCALAPPDATA%\Raycast\clipboard. The import reads those files (images, CF_HTML, RTF, text), keeps the original dates, and leaves the Raycast files untouched. Raycast itself is not installed or modified."

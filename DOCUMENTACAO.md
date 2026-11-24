@@ -836,6 +836,73 @@ legível em disco; clique seleciona / duplo clique cola; `Backspace` na busca n�
 apaga nada.
 
 Tabela completa de mais de 30 testes com resultados: ver `README.md`.
+### 8.40 Colagem 3×5, "Compactar banco" e OCR em prioridade baixa (v0.1.30)
+
+#### Colagem: a diferença de 2 ms se mantém (`_ref/colagem_3x.py`)
+
+Três rodadas de 5 por app, 15 amostras cada:
+
+| App | mediana | min–max |
+|---|---|---|
+| Rayclip | 20,1 ms | 18–42 |
+| Raycast | **17,7 ms** | 17–21 |
+
+O Raycast é ~2,4 ms mais rápido **de forma consistente** (as três rodadas deram
+22,4/20,0/20,1 contra 17,8/17,7/17,9). Não dá para chamar de empate, mas 2,4 ms
+são um sétimo de um quadro a 60 Hz — invisível. O caminho já é o mais curto
+possível: `copy_entry` → `emit` → `hide_fast` → thread → `SendInput` atômico com
+0 ms de espera e sondagem de foco de 1 ms. O log confirma `espera=0ms` na
+maioria das colagens, então não há sono fixo a remover.
+
+#### `ipc::Response` para a lista: **medido e descartado**
+
+Hipótese: devolver a lista como JSON já serializado (bytes) evitaria uma segunda
+serialização no Tauri. Medido no debug, 5 rodadas de cada, mesma janela, 1,8 MB:
+
+| Comando | mediana |
+|---|---|
+| `list_entries` (Vec<Entry>) | 87,3 ms (84–87,4) |
+| `list_entries_raw` (`ipc::Response` + `JSON.parse`) | 86,9 ms (85,3–87,1) |
+
+**Empate.** O Tauri 2 já manda a string JSON pronta pelo `Channel` (não há
+re-serialização para eliminar), então a mudança só acrescentaria superfície.
+Revertida — o comando e a função voltaram a ser o `Vec<Entry>` de antes. Fica
+registrado: **não repetir essa “otimização”**. Os 87 ms são dominados pelo
+tamanho do que trafega (1,8 MB) e pelo `JSON.parse` na página; o ganho real
+estaria em mandar menos bytes ou filtrar no Rust, não no formato.
+
+#### "Compactar banco" (VACUUM) no Settings
+
+Novo comando `compact_db` e campo em **Data & Security** (EN/pt-BR, com estado
+"Compactando…" e aviso do resultado). Medido nesta máquina, 1680 entradas:
+
+| | bytes |
+|---|---|
+| antes | 455.913.472 (434,8 MB) |
+| depois | 444.649.472 (424,1 MB) |
+
+**−11,3 MB (−2,5%)**, e a lista continuou carregando normalmente depois
+(1680 entradas). O texto da tela deixa claro que isso devolve **espaço**, não
+prova que os bytes antigos saíram do SSD.
+
+#### OCR em prioridade baixa
+
+O backfill (`run_ocr_for`) chama `win32::thread_below_normal()`
+(`SetThreadPriority(THREAD_PRIORITY_BELOW_NORMAL)`) antes de indexar: indexar
+imagem é trabalho de fundo e não pode competir com a janela que o usuário acabou
+de abrir. Em máquina com um núcleo livre o efeito é nulo; com a CPU cheia, quem
+está na frente ganha a vez.
+
+**Release 0.1.30:** `Rayclip_0.1.30_x64-setup.exe` (3.56 MiB) instalado e
+reaberto; CDP fora do build (porta 9222 recusada na instância instalada);
+histórico **1680** entradas; `cargo test --lib` **36/36**; i18n 329 chaves PT, 0
+sem tradução.
+
+**Arquivos:** `src-tauri/src/lib.rs` (`compact_db`, prioridade no OCR),
+`src-tauri/src/store.rs` (`db_file`), `src-tauri/src/win32.rs`
+(`thread_below_normal`), `src/api.ts`, `src/components/SettingsPage.tsx`,
+`src/lib/i18n.ts`, `_ref/colagem_3x.py`.
+
 ### 8.39 Harness completo numa rodada (e o que impedia o Raycast de ser medido)
 
 O `_ref/harness_compare.py all` agora roda **as três seções numa tacada só**, sem

@@ -513,6 +513,28 @@ copiou, então se o gerenciador não publicar o marcador o conteúdo entra no
 histórico dele. A decisão fica nossa, de propósito, e o interruptor "Also capture
 passwords & protected content" desliga o filtro quando você quiser.
 
+### Novidades da v0.1.30 — "Compactar banco" e OCR em prioridade baixa
+
+**Data & Security → Compact database**: reescreve o arquivo (`VACUUM`) sem as
+páginas livres que sobraram das exclusões. Aqui, com 1680 entradas:
+**434,8 MB → 424,1 MB** (−11,3 MB). É espaço em disco, não promessa de apagar
+para sempre — as páginas apagadas já são zeradas dentro do arquivo cifrado
+(`secure_delete`).
+
+O backfill de OCR passou a rodar com `THREAD_PRIORITY_BELOW_NORMAL`: indexar
+imagem é trabalho de fundo e não compete com a janela aberta.
+
+**Duas medições, uma util e outra descartada:**
+
+- **Colagem, 3 rodadas de 5** (15 amostras por app): Rayclip **20,1 ms** ×
+  Raycast **17,7 ms**. A diferença de 2,4 ms se mantém nas três rodadas — um
+  sétimo de quadro a 60 Hz, mas o Raycast é consistentemente mais rápido no
+  Enter. O log mostra `espera=0ms` na maioria das colagens: não há sono fixo
+  sobrando para cortar.
+- **`ipc::Response` para a lista: empate** (87,3 ms × 86,9 ms em 1,8 MB). O
+  Tauri 2 já manda a string JSON pronta pelo `Channel`, então não havia segunda
+  serialização para eliminar. Revertido para não ganhar superfície sem ganho.
+
 ### Harness medindo os dois apps de ponta a ponta (v0.1.29, sem release)
 
 O `_ref/harness_compare.py all` voltou a fechar as três seções numa rodada:

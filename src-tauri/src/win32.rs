@@ -6,8 +6,9 @@ use windows_sys::Win32::Foundation::{
 };
 use windows_sys::Win32::System::DataExchange::{GetClipboardOwner, GetClipboardSequenceNumber};
 use windows_sys::Win32::System::Threading::{
-    AttachThreadInput, CreateMutexW, GetCurrentProcessId, GetCurrentThreadId, OpenProcess,
-    QueryFullProcessImageNameW, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
+    AttachThreadInput, CreateMutexW, GetCurrentProcessId, GetCurrentThread, GetCurrentThreadId,
+    OpenProcess, QueryFullProcessImageNameW, SetThreadPriority, PROCESS_NAME_WIN32,
+    PROCESS_QUERY_LIMITED_INFORMATION, THREAD_PRIORITY_BELOW_NORMAL,
 };
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::SetFocus;
 use windows_sys::Win32::UI::WindowsAndMessaging::{
@@ -662,8 +663,16 @@ pub fn paste_into(hwnd: isize) -> bool {
     }
 }
 
-const ERROR_ALREADY_EXISTS: u32 = 183;
+/// Prioridade abaixo do normal para a thread atual. O backfill de OCR roda em
+/// segundo plano: indexar imagem não pode competir com a janela que o usuário
+/// acabou de abrir (o Windows dá a vez a quem está na frente).
+pub fn thread_below_normal() {
+    unsafe {
+        SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+    }
+}
 
+const ERROR_ALREADY_EXISTS: u32 = 183;
 /// Single-instance guard: only one process may own the clipboard history store.
 pub fn already_running() -> bool {
     unsafe {
