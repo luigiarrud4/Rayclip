@@ -836,6 +836,44 @@ legível em disco; clique seleciona / duplo clique cola; `Backspace` na busca n�
 apaga nada.
 
 Tabela completa de mais de 30 testes com resultados: ver `README.md`.
+### 8.41 Iniciar na bandeja e `--open` para abrir na tela (v0.1.31)
+
+Antes, `setup()` **sempre** fazia `win.show()` + `set_focus()`: quem abre o app no
+login via Tarefa Agendada levava a janela na cara, no meio do trabalho.
+
+Agora:
+
+- sem argumento → nasce **na bandeja** (`inicio: janela na bandeja (use --open para
+  abrir na tela)` no log);
+- com `--open` → mostra a janela já no início, pelo mesmo caminho do atalho
+  (`win.show()` + `set_focus()` + `set_shown(true)`, senão o estado de
+  visibilidade ficaria mentindo para o vigia de foco).
+
+A flag é lida em `run()` (para o log) e **de novo dentro da closure do `setup`**:
+capturar o `bool` de fora obrigava a closure a ser `move`, e ela sobrevive à
+função — a primeira tentativa nem compilava (`E0373 closure may outlive`).
+
+**Medido, na instância instalada (0.1.31):**
+
+| Como inicia | Janela visível depois de 6 s |
+|---|---|
+| sem argumento | **não** (`find_window` = None) |
+| `--open` | sim (título "Rayclip") |
+| sem argumento + `Alt+Space` | sim |
+| sem argumento + abrir o exe de novo | sim (segunda instância manda a primeira mostrar) |
+
+`_ref/reiniciar.ps1` ganhou `-Hidden`; sem ele passa `--open` (é o que os testes
+em `_ref/` precisam para achar a janela). Detalhe que custou uma rodada: com
+**duas instâncias** vivas o `Alt+Space` não abre nada — a instância que ficou
+com o registro do atalho não era a que respondia. Matando todas e subindo uma, o
+atalho volta a funcionar.
+
+**Release 0.1.31:** `Rayclip_0.1.31_x64-setup.exe` (3.56 MiB) instalado; CDP
+fora do build (9222 recusada); o app está rodando **na bandeja**, como você pediu.
+
+**Arquivos:** `src-tauri/src/lib.rs` (`abrir_no_inicio`), `_ref/reiniciar.ps1`
+(`-Hidden`).
+
 ### 8.40 Colagem 3×5, "Compactar banco" e OCR em prioridade baixa (v0.1.30)
 
 #### Colagem: a diferença de 2 ms se mantém (`_ref/colagem_3x.py`)

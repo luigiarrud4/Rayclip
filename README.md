@@ -513,6 +513,30 @@ copiou, então se o gerenciador não publicar o marcador o conteúdo entra no
 histórico dele. A decisão fica nossa, de propósito, e o interruptor "Also capture
 passwords & protected content" desliga o filtro quando você quiser.
 
+### Novidades da v0.1.31 — inicia na bandeja; `--open` abre na tela
+
+O app nasce **minimizado** (só o ícone na bandeja), que é o certo quando o
+Windows o inicia no login: a janela não pula na frente de quem está trabalhando.
+Para abrir já na tela:
+
+```
+rayclip.exe --open
+```
+
+Abrir o atalho normal também funciona: se já existe uma instância, ela recebe o
+sinal e mostra a janela (é o mesmo caminho do duplo clique). O atalho global
+(`Alt+Space` por padrão) continua abrindo, com ou sem `--open`.
+
+**Medido na instância instalada:** sem argumento → nenhuma janela visível depois
+de 6 s; com `--open` → janela no ar com título "Rayclip"; sem argumento e
+`Alt+Space` → abre; abrir o exe de novo → abre.
+
+Detalhe que custou uma rodada: com **duas instâncias** vivas o `Alt+Space` não
+abre nada — quem ficou com o registro do atalho não era a instância que
+respondia ao sinal de ativação. Matando todas e subindo uma, volta ao normal.
+
+`_ref/reiniciar.ps1` ganhou `-Hidden`; sem ele passa `--open`.
+
 ### Novidades da v0.1.30 — "Compactar banco" e OCR em prioridade baixa
 
 **Data & Security → Compact database**: reescreve o arquivo (`VACUUM`) sem as

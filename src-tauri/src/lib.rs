@@ -2405,6 +2405,13 @@ pub fn run() {
     {
         return;
     }
+    // `--open` faz o app abrir já na tela. Sem a flag ele nasce **na bandeja**,
+    // que é o certo quando o Windows o inicia sozinho: ninguém quer a janela
+    // pulando na frente no login. A flag existe para testar (e para quem quiser
+    // abrir pelo atalho com a janela à mostra).
+    let abrir_no_inicio = std::env::args().any(|a| a == "--open");
+    log(&format!("inicio: abrir_no_inicio={abrir_no_inicio}"));
+
     if win32::already_running() {
         // Já existe uma instância: pede a ela que mostre a janela (duplo clique
         // no atalho, menu Iniciar, "Executar"…).
@@ -2701,8 +2708,19 @@ pub fn run() {
                     let blur = cfg.translucent && sysinteg::windows_transparency();
                     win32::apply_backdrop(h.0 as isize, if blur { 2 } else { 1 });
                 }
-                let _ = win.show();
-                let _ = win.set_focus();
+                // Lido de novo aqui (em vez de capturar de `run()`): a closure
+                // do `setup` pode sobreviver à função, e um `bool` copiado evita
+                // ter que transformar tudo em `move`.
+                let abrir_no_inicio = std::env::args().any(|a| a == "--open");
+                if abrir_no_inicio {
+                    // Mesmo caminho do atalho: marca o estado de visibilidade e
+                    // pede o foco, do jeito que o resto do app espera.
+                    let _ = win.show();
+                    let _ = win.set_focus();
+                    set_shown(true);
+                } else {
+                    log("inicio: janela na bandeja (use --open para abrir na tela)");
+                }
             }
 
             let avisos_atalho = apply_shortcuts(app.handle(), &cfg);

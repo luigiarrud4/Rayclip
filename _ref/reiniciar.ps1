@@ -1,6 +1,10 @@
 # Fecha e reabre o Rayclip — rodar depois de TODO update (build/correção).
-# Uso: powershell -NoProfile -File _ref/reiniciar.ps1 [-Release]
-param([switch]$Release)
+# Uso: powershell -NoProfile -File _ref/reiniciar.ps1 [-Release] [-Hidden]
+#
+# Por padrão abre com `--open` (janela na tela), que é o que os testes em _ref/
+# precisam. `-Hidden` sobe só na bandeja, que é como o app nasce quando o
+# Windows o inicia sozinho.
+param([switch]$Release, [switch]$Hidden)
 
 $exe = if ($Release) {
     "C:\Users\Lugia\Projects\rayclip\src-tauri\target\release\rayclip.exe"
@@ -20,7 +24,11 @@ if (-not (Test-Path $exe)) {
 }
 
 Remove-Item "$env:TEMP\rayclip.log" -ErrorAction SilentlyContinue
-Start-Process $exe
+if ($Hidden) {
+    Start-Process -FilePath $exe
+} else {
+    Start-Process -FilePath $exe -ArgumentList "--open"
+}
 Start-Sleep -Seconds 3
 
 $p = Get-Process rayclip -ErrorAction SilentlyContinue | Select-Object -First 1
