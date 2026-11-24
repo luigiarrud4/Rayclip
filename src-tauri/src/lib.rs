@@ -46,42 +46,114 @@ impl Drop for DialogGuard {
     }
 }
 
+/// Últimos atalhos que **realmente** ficaram registrados (abrir, colar).
+///
+/// Serve de rede de segurança: se o usuário escolher um atalho que outro
+/// programa já usa, o app volta para o que funcionava em vez de ficar sem
+/// atalho nenhum até reiniciar.
+static ATALHOS_ATIVOS: std::sync::Mutex<Option<(String, String)>> = std::sync::Mutex::new(None);
+
 /// (Re)registra os atalhos globais a partir das configurações.
 ///
 /// Cada atalho é registrado **sozinho**: com o Raycast aberto (que usa
 /// `Ctrl+Shift+V`) um registro em bloco falhava e derrubava também o
 /// `Alt+Space`, deixando o app sem atalho nenhum e sem aviso.
-fn apply_shortcuts(app: &AppHandle, cfg: &settings::Settings) -> Vec<String> {
+///
+/// Quando o registro falha, `cfg` é **revertido** para o atalho que estava
+/// funcionando e a mensagem devolvida é um código estável
+/// (`hotkey-conflict|show|<tentado>|<mantido>`) — a interface traduz. O texto
+/// cru do erro (`HotKey { mods: Modifiers(ALT), … }`) nunca chega ao usuário.
+fn apply_shortcuts(app: &AppHandle, cfg: &mut settings::Settings) -> Vec<String> {
     use tauri_plugin_global_shortcut::GlobalShortcutExt;
     let gs = app.global_shortcut();
     let _ = gs.unregister_all();
     let mut warnings = Vec::new();
-    let mut feitos: Vec<&str> = Vec::new();
-    for combo in [cfg.show_hotkey.as_str(), cfg.paste_hotkey.as_str()] {
-        let combo = combo.trim();
+    let anteriores = ATALHOS_ATIVOS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
+    let mut feitos: Vec<String> = Vec::new();
+    let mut bons: Vec<Option<String>> = vec![None, None];
+
+    for (indice, combo) in [cfg.show_hotkey.clone(), cfg.paste_hotkey.clone()]
+        .into_iter()
+        .enumerate()
+    {
+        let combo = combo.trim().to_string();
         if combo.is_empty() || feitos.contains(&combo) {
             continue;
         }
-        feitos.push(combo);
+        feitos.push(combo.clone());
         let handle = app.clone();
-        let res = gs.on_shortcut(combo, move |_a, _s, event| {
+        let res = gs.on_shortcut(combo.as_str(), move |_a, _s, event| {
             if event.state() == tauri_plugin_global_shortcut::ShortcutState::Pressed {
                 toggle_window(&handle);
             }
         });
         match res {
-            Ok(()) => log(&format!("atalho registrado: {combo}")),
+            Ok(()) => {
+                log(&format!("atalho registrado: {combo}"));
+                bons[indice] = Some(combo);
+            }
             Err(e) => {
                 log(&format!("atalho {combo} indisponivel: {e}"));
-                warnings.push(format!("atalho {combo}: {e}"));
+                // Volta para o último atalho bom deste campo, se houver.
+                let antigo = anteriores.as_ref().map(|(a, b)| {
+                    if indice == 0 {
+                        a.clone()
+                    } else {
+                        b.clone()
+                    }
+                });
+                let mut mantido = None;
+                if let Some(antigo) = antigo.filter(|a| !a.trim().is_empty() && *a != combo) {
+                    let h2 = app.clone();
+                    let ok = gs
+                        .on_shortcut(antigo.as_str(), move |_a, _s, event| {
+                            if event.state()
+                                == tauri_plugin_global_shortcut::ShortcutState::Pressed
+                            {
+                                toggle_window(&h2);
+                            }
+                        })
+                        .is_ok();
+                    if ok {
+                        log(&format!("atalho {combo} recusado; mantido {antigo}"));
+                        if indice == 0 {
+                            cfg.show_hotkey = antigo.clone();
+                        } else {
+                            cfg.paste_hotkey = antigo.clone();
+                        }
+                        bons[indice] = Some(antigo.clone());
+                        mantido = Some(antigo);
+                    }
+                }
+                let campo = if indice == 0 { "show" } else { "paste" };
+                match mantido {
+                    Some(k) => warnings.push(format!("hotkey-conflict|{campo}|{combo}|{k}")),
+                    None => warnings.push(format!("hotkey-failed|{campo}|{combo}")),
+                }
             }
         }
     }
+
+    // Memória dos atalhos que ficaram valendo (mesmo que só um tenha entrado).
+    let memoria = (
+        bons[0]
+            .clone()
+            .or_else(|| anteriores.as_ref().map(|(a, _)| a.clone()))
+            .unwrap_or_default(),
+        bons[1]
+            .clone()
+            .or_else(|| anteriores.as_ref().map(|(_, b)| b.clone()))
+            .unwrap_or_default(),
+    );
+    *ATALHOS_ATIVOS.lock().unwrap_or_else(|e| e.into_inner()) = Some(memoria);
     warnings
 }
 
 /// Aplica tudo que depende das configurações (atalhos, limite, retenção, Windows).
-fn apply_settings(app: &AppHandle, cfg: &settings::Settings) -> Vec<String> {
+fn apply_settings(app: &AppHandle, cfg: &mut settings::Settings) -> Vec<String> {
     let mut warnings = apply_shortcuts(app, cfg);
     {
         let state = app.state::<AppState>();
@@ -110,6 +182,247 @@ fn apply_settings(app: &AppHandle, cfg: &settings::Settings) -> Vec<String> {
     warnings
 }
 
+/// Arrasto para fora: payload pronto para o `dataTransfer` do Chromium.
+///
+/// O Explorer só aceita `CF_HDROP` (arquivo de verdade), então o arrasto é feito
+/// pelo próprio Chromium com a receita `DownloadURL`: mime, nome e uma URL de
+/// objeto. Ver `src/components/EntryList.tsx`.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DragPayload {
+    name: String,
+    mime: String,
+    /// Bytes em base64 — viram um `blob:` no frontend (o arquivo que o Explorer
+    /// cria). Vazio quando o conteúdo é grande demais.
+    data: String,
+    /// Texto puro para soltar em editor/chat (Notepad, Discord, Word). `None`
+    /// para imagens/GIFs.
+    text: Option<String>,
+    /// O texto é um link (o frontend também anuncia `text/uri-list`).
+    link: bool,
+}
+
+/// Tamanho máximo que vira arrasto. Acima disso o arquivo não é lido: copiar
+/// centenas de MB para base64 travava a janela ("não respondendo").
+const MAX_ARRASTO: u64 = 32 * 1024 * 1024;
+/// Texto oferecido como `text/plain` no arrasto.
+const MAX_ARRASTO_TEXTO: usize = 200_000;
+
+/// Conteúdo + nome para arrastar a entrada para uma pasta/outro app.
+///
+/// Roda numa thread de bloqueio: o hover da lista chama isto para adiantar o
+/// payload, e ler um `.zip` grande no meio do laço de eventos congelava a janela.
+#[tauri::command]
+async fn drag_payload(state: State<'_, AppState>, id: String) -> Result<DragPayload, String> {
+    let (entry, imagem) = {
+        let store = lock_store(&state.store);
+        let Some(e) = store.get(&id).cloned() else {
+            return Err("entrada sumiu".into());
+        };
+        let img = if e.has_image {
+            store.image_bytes(&id)
+        } else {
+            None
+        };
+        (e, img)
+    };
+    tauri::async_runtime::spawn_blocking(move || monta_payload(&entry, imagem, &id))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Monta o payload de arrasto (roda fora da thread de UI).
+fn monta_payload(
+    entry: &crate::store::Entry,
+    imagem: Option<Vec<u8>>,
+    id: &str,
+) -> Result<DragPayload, String> {
+    let mut ext = normalize_ext("", entry);
+    let mut stem = drag_file_stem(entry);
+    let mut mime = String::from("text/plain");
+    let mut texto: Option<String> = None;
+
+    let bytes: Vec<u8> = if let Some(img) = imagem {
+        let is_gif = entry.gif || img.starts_with(b"GIF8");
+        mime = if is_gif {
+            "image/gif".into()
+        } else {
+            match ext.as_str() {
+                "jpg" | "jpeg" => "image/jpeg",
+                "webp" => "image/webp",
+                "bmp" => "image/bmp",
+                _ => "image/png",
+            }
+            .to_string()
+        };
+        // Sem conversão quando o formato guardado já é o pedido: o arrasto tem
+        // que sair na hora do `dragstart`, e reencodar levava ~170 ms.
+        if (is_gif && ext == "gif") || (!is_gif && ext == "png") {
+            img
+        } else {
+            let tmp = std::env::temp_dir().join(format!("rayclip-drag-{id}.{ext}"));
+            encode_image(&img, is_gif, &tmp.to_string_lossy(), &ext)?;
+            let lido = std::fs::read(&tmp).map_err(|e| e.to_string())?;
+            let _ = std::fs::remove_file(&tmp);
+            lido
+        }
+    } else if let Some(p) = entry
+        .paths
+        .first()
+        .map(std::path::PathBuf::from)
+        .filter(|p| p.is_file())
+    {
+        let len = std::fs::metadata(&p).map_err(|e| e.to_string())?.len();
+        if len > MAX_ARRASTO {
+            crate::log(&format!("drag: {} grande demais ({len} bytes) - sem arrasto", stem));
+            return Err(format!("arquivo grande demais para arrastar ({len} bytes)"));
+        }
+        // O arrasto de um arquivo do disco leva a extensão e o nome **do
+        // arquivo** (um `.zip` continuava `.txt`, um `.png` virava `.txt`).
+        if let Some(e) = p.extension().map(|e| e.to_string_lossy().to_lowercase()) {
+            if !e.is_empty() {
+                ext = e;
+            }
+        }
+        if let Some(n) = p.file_stem().map(|s| s.to_string_lossy().to_string()) {
+            let limpo: String = n
+                .chars()
+                .map(|c| {
+                    if c.is_control() || r#"/\:*?"<>|"#.contains(c) {
+                        ' '
+                    } else {
+                        c
+                    }
+                })
+                .collect();
+            let limpo = limpo.split_whitespace().collect::<Vec<_>>().join(" ");
+            if !limpo.is_empty() {
+                stem = limpo;
+            }
+        }
+        mime = mime_of_path(&p);
+        std::fs::read(&p).map_err(|e| e.to_string())?
+    } else if let Some(arquivo) = caminho_do_texto(entry) {
+        // O Windows copia arquivos como `CF_HDROP` **e** texto com o caminho;
+        // quando só o texto fica guardado, o arrasto ainda tem que entregar o
+        // arquivo (era o caso do `.png` que virava `.txt`).
+        let len = std::fs::metadata(&arquivo).map_err(|e| e.to_string())?.len();
+        if len > MAX_ARRASTO {
+            crate::log(&format!("drag: {} grande demais ({len} bytes) - sem arrasto", stem));
+            return Err(format!("arquivo grande demais para arrastar ({len} bytes)"));
+        }
+        if let Some(e) = arquivo.extension().map(|e| e.to_string_lossy().to_lowercase()) {
+            if !e.is_empty() {
+                ext = e;
+            }
+        }
+        if let Some(n) = arquivo.file_stem().map(|s| s.to_string_lossy().to_string()) {
+            let limpo: String = n
+                .chars()
+                .map(|c| {
+                    if c.is_control() || r#"/\:*?"<>|"#.contains(c) {
+                        ' '
+                    } else {
+                        c
+                    }
+                })
+                .collect();
+            let limpo = limpo.split_whitespace().collect::<Vec<_>>().join(" ");
+            if !limpo.is_empty() {
+                stem = limpo;
+            }
+        }
+        mime = mime_of_path(&arquivo);
+        std::fs::read(&arquivo).map_err(|e| e.to_string())?
+    } else {
+        let t = texto_do_entry(entry);
+        let mut corte = t.len().min(MAX_ARRASTO_TEXTO);
+        while corte > 0 && !t.is_char_boundary(corte) {
+            corte -= 1;
+        }
+        texto = Some(t[..corte].to_string());
+        t.into_bytes()
+    };
+
+    if bytes.len() as u64 > MAX_ARRASTO {
+        return Err("conteudo grande demais para arrastar".into());
+    }
+    let link = entry.kind == "link";
+    crate::log(&format!("drag payload: {stem}.{ext} {mime} {} bytes", bytes.len()));
+    Ok(DragPayload {
+        name: format!("{stem}.{ext}"),
+        data: base64::encode(&bytes),
+        mime,
+        text: texto,
+        link,
+    })
+}
+
+/// Caminho de arquivo escondido num texto ("C:\pasta\foto.png", com ou sem
+/// aspas). Só vale para uma linha que exista no disco.
+fn caminho_do_texto(entry: &crate::store::Entry) -> Option<std::path::PathBuf> {
+    let texto = entry.text.as_deref()?.trim();
+    if texto.is_empty() || texto.lines().count() > 1 {
+        return None;
+    }
+    let limpo = texto.trim_matches('"').trim_matches('\'').trim();
+    if limpo.len() < 4 || !limpo.contains(':') {
+        return None;
+    }
+    let p = std::path::PathBuf::from(limpo);
+    if p.is_file() {
+        Some(p)
+    } else {
+        None
+    }
+}
+
+/// Corpo de texto da entrada (HTML/RTF preferidos, texto como último recurso).
+fn texto_do_entry(entry: &crate::store::Entry) -> String {
+    entry
+        .text
+        .clone()
+        .or_else(|| entry.ocr_text.clone())
+        .unwrap_or_default()
+}
+
+/// Tipo MIME a partir da extensão do arquivo.
+fn mime_of_path(p: &std::path::Path) -> String {
+    let ext = p
+        .extension()
+        .map(|e| e.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+    match ext.as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "bmp" => "image/bmp",
+        "pdf" => "application/pdf",
+        "txt" | "log" | "md" | "csv" => "text/plain",
+        "json" => "application/json",
+        "zip" => "application/zip",
+        "mp4" => "video/mp4",
+        "mp3" => "audio/mpeg",
+        _ => "application/octet-stream",
+    }
+    .to_string()
+}
+
+/// O arrasto começou de verdade (o `dragstart` do Chromium aceitou o payload).
+#[tauri::command]
+fn drag_start() {
+    crate::log("drag: comecou");
+    ARRASTANDO.store(true, Ordering::SeqCst);
+}
+
+/// O frontend avisa quando o arrasto terminou — enquanto durar, a janela não
+/// pode se esconder (o foco vai para o Explorer e o app se fecharia no meio).
+#[tauri::command]
+fn drag_end() {
+    ARRASTANDO.store(false, Ordering::SeqCst);
+}
+
 #[tauri::command]
 fn get_settings(state: State<AppState>) -> settings::Settings {
     lock_settings(&state.settings).clone()
@@ -121,10 +434,18 @@ fn save_settings(
     state: State<AppState>,
     settings: settings::Settings,
 ) -> Result<Vec<String>, String> {
-    let cfg = settings.sanitized();
+    let mut cfg = settings.sanitized();
     cfg.save(&app)?;
+    let antes = cfg.clone();
     *lock_settings(&state.settings) = cfg.clone();
-    let warnings = apply_settings(&app, &cfg);
+    let warnings = apply_settings(&app, &mut cfg);
+    // Se algum atalho foi revertido (já usado por outro app), o valor mantido
+    // tem que ir para o disco — senão a próxima abertura tentaria de novo o
+    // atalho impossível e o app ficaria sem atalho de novo.
+    if cfg.show_hotkey != antes.show_hotkey || cfg.paste_hotkey != antes.paste_hotkey {
+        cfg.save(&app)?;
+        *lock_settings(&state.settings) = cfg.clone();
+    }
     log(&format!("settings saved ({} avisos)", warnings.len()));
     // Avisa a UI (tema, cores e toggles aplicados na hora).
     let _ = app.emit("settings:changed", ());
@@ -413,6 +734,9 @@ fn lock_ignores(m: &Mutex<Vec<u32>>) -> std::sync::MutexGuard<'_, Vec<u32>> {
 /// `true` desde a criação (o Tauri mapeia a janela mesmo com `visible: false`),
 /// o que furava qualquer decisão de "mostrar/esconder".
 static SHOWN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Um arrasto para fora está em andamento (a janela não esconde).
+static ARRASTANDO: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Vigia do renderizador (§8.43). O WebView2 pode morrer (processo do renderer
 /// morto por falta de memória, driver de vídeo, crash) e a janela fica branca
@@ -1423,6 +1747,29 @@ fn entry_default_ext(entry: &crate::store::Entry) -> &'static str {
     }
 }
 
+/// Nome de arquivo para o arrasto. Diferente do "Save as…": aqui o destino é
+/// uma pasta qualquer e o nome aparece no Explorer, então arquivos usam só o
+/// nome do arquivo (nada de "C Users Lugia Downloads ...") e o resto reaproveita
+/// a limpeza do `file_stem`.
+fn drag_file_stem(entry: &crate::store::Entry) -> String {
+    if let Some(first) = entry.paths.first() {
+        if let Some(nome) = std::path::Path::new(first)
+            .file_stem()
+            .map(|s| s.to_string_lossy().to_string())
+        {
+            let limpo: String = nome
+                .chars()
+                .map(|c| if c.is_control() || r#"/\:*?"<>|"#.contains(c) { ' ' } else { c })
+                .collect();
+            let nome = limpo.split_whitespace().collect::<Vec<_>>().join(" ");
+            if !nome.is_empty() {
+                return nome;
+            }
+        }
+    }
+    file_stem(entry, 1)
+}
+
 /// Nome de arquivo seguro derivado da entrada.
 fn file_stem(entry: &crate::store::Entry, index: usize) -> String {
     let raw = if entry.has_image {
@@ -2232,6 +2579,12 @@ pub fn looks_like_link(s: &str) -> bool {
 /// Esconde de verdade: `ShowWindow(SW_HIDE)` na hora e, em seguida, o
 /// `hide()` do Tauri só para manter o estado interno dele em sincronia.
 fn hide_fast(win: &tauri::WebviewWindow, hwnd: isize) {
+    // Durante um arrasto para fora o foco vai para o Explorer: esconder aqui
+    // mataria o arrasto no meio.
+    if ARRASTANDO.load(Ordering::SeqCst) {
+        log("hide ignorado: arrasto em andamento");
+        return;
+    }
     set_shown(false);
     win32::hide_now(hwnd);
     // `hide()` só serve para o estado interno do Tauri; ele despacha para a
@@ -2317,6 +2670,15 @@ fn click_outside(app: &AppHandle, target: isize) {
         return; // clicou na nossa janela
     }
     let target_pid = win32::pid_of_hwnd(target);
+    log(&format!(
+        "hook diag: pt=({},{}) target=0x{target:x} {} pid={target_pid} root=0x{root:x} pid_root={} ours=0x{ours:x} fg=0x{:x} rect={:?}",
+        win32::cursor_point().0,
+        win32::cursor_point().1,
+        win32::class_of_hwnd(target),
+        win32::pid_of_hwnd(root),
+        win32::foreground_hwnd(),
+        win32::window_rect(ours)
+    ));
     if target_pid == std::process::id() || win32::pid_of_hwnd(root) == std::process::id() {
         return; // menu / diálogo nativo nosso
     }
@@ -2763,6 +3125,9 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             list_entries,
+            drag_payload,
+            drag_start,
+            drag_end,
             search_entries,
             heartbeat,
             compact_db,
@@ -2858,6 +3223,15 @@ pub fn run() {
                 }
                 round_corners(&win);
                 if let Ok(h) = win.hwnd() {
+                    // Sem barra de título nativa em **nenhuma** máquina: num PC
+                    // de outro usuário os três botões do Windows apareceram
+                    // mesmo com `decorations: false`.
+                    let (antes, depois) = win32::strip_caption_sem_quebrar(h.0 as isize);
+                    log(&format!(
+                        "moldura: estilo 0x{antes:08x} -> 0x{depois:08x} (caption={}, sysmenu={})",
+                        depois & 0x00C0_0000 != 0,
+                        depois & 0x0008_0000 != 0
+                    ));
                     // Mica (translúcido) já no primeiro desenho, sem "flash".
                     let blur = cfg.translucent && sysinteg::windows_transparency();
                     win32::apply_backdrop(h.0 as isize, if blur { 2 } else { 1 });
@@ -2957,7 +3331,8 @@ pub fn run() {
                 }
             }
 
-            let avisos_atalho = apply_shortcuts(app.handle(), &cfg);
+            let mut cfg_atalhos = cfg.clone();
+            let avisos_atalho = apply_shortcuts(app.handle(), &mut cfg_atalhos);
             log(&format!("atalhos: {} aviso(s)", avisos_atalho.len()));
             let _ = sysinteg::set_replace_win_v(cfg.replace_win_v);
             let _ = sysinteg::set_startup(cfg.launch_at_login);

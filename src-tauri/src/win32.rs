@@ -412,6 +412,108 @@ pub fn root_of(h: isize) -> isize {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Moldura: garante que **nenhuma** máquina desenhe botões nativos
+// ---------------------------------------------------------------------------
+
+/// Máscaras de estilo do Windows que fazem o DWM desenhar barra de título e os
+/// botões minimizar/maximizar/fechar.
+const WS_CAPTION: u32 = 0x00C0_0000; // WS_BORDER | WS_DLGFRAME
+const WS_THICKFRAME: u32 = 0x0004_0000;
+const WS_POPUP: u32 = 0x8000_0000;
+const WS_SYSMENU: u32 = 0x0008_0000;
+
+/// Tira a barra de título nativa e o menu de sistema, mantendo a janela
+/// **redimensionável** (WS_THICKFRAME) — o redimensionamento do Tauri continua
+/// funcionando, os botões do Windows não aparecem.
+///
+/// Existe porque num computador de outro usuário os três botões nativos
+/// apareceram mesmo com `decorations: false` no `tauri.conf.json` (variação de
+/// versão do Windows/composição). Em vez de confiar na configuração, força o
+/// estilo em tempo de execução e registra os bits antes/depois.
+pub fn strip_caption(h: isize) -> (u32, u32) {
+    if h == 0 {
+        return (0, 0);
+    }
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetWindowLongW, SetWindowLongW, SetWindowPos, GWL_STYLE, SWP_FRAMECHANGED, SWP_NOACTIVATE,
+        SWP_NOMOVE, SWP_NOOWNERZORDER, SWP_NOSIZE, SWP_NOZORDER,
+    };
+    unsafe {
+        let estilo = GetWindowLongW(h as HWND, GWL_STYLE) as u32;
+        let mut novo = estilo & !WS_CAPTION & !WS_SYSMENU;
+        novo |= WS_POPUP | WS_THICKFRAME;
+        if novo != estilo {
+            SetWindowLongW(h as HWND, GWL_STYLE, novo as i32);
+            SetWindowPos(
+                h as HWND,
+                std::ptr::null_mut(),
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE
+                    | SWP_NOSIZE
+                    | SWP_NOZORDER
+                    | SWP_NOACTIVATE
+                    | SWP_NOOWNERZORDER
+                    | SWP_FRAMECHANGED,
+            );
+        }
+        let depois = GetWindowLongW(h as HWND, GWL_STYLE) as u32;
+        (estilo, depois)
+    }
+}
+
+
+/// Versão alternativa do ajuste de moldura: não mexe no estilo da janela, e sim
+/// pede ao DWM para **não desenhar** a área não-cliente (barra de título e
+/// botões). Trocar `WS_CAPTION` por `WS_POPUP` em tempo de execução mexeu com o
+/// teste de acerto do mouse (o clique passou a cair na área de trabalho), então
+/// esse caminho fica como experimento e o escolhido é este.
+pub fn strip_caption_sem_quebrar(h: isize) -> (u32, u32) {
+    if h == 0 {
+        return (0, 0);
+    }
+    use windows_sys::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_NCRENDERING_POLICY};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{GetWindowLongW, GWL_STYLE};
+    const DWMNCRP_DISABLED: u32 = 1;
+    let antes = unsafe { GetWindowLongW(h as HWND, GWL_STYLE) as u32 };
+    let politica: u32 = DWMNCRP_DISABLED;
+    unsafe {
+        let _ = DwmSetWindowAttribute(
+            h as _,
+            DWMWA_NCRENDERING_POLICY as u32,
+            &politica as *const _ as *const core::ffi::c_void,
+            std::mem::size_of_val(&politica) as u32,
+        );
+    }
+    let depois = unsafe { GetWindowLongW(h as HWND, GWL_STYLE) as u32 };
+    (antes, depois)
+}
+
+
+/// Posição do cursor na tela (diagnóstico).
+pub fn cursor_point() -> (i32, i32) {
+    use windows_sys::Win32::Foundation::POINT;
+    use windows_sys::Win32::UI::WindowsAndMessaging::GetCursorPos;
+    let mut p: POINT = POINT { x: 0, y: 0 };
+    unsafe { GetCursorPos(&mut p) };
+    (p.x, p.y)
+}
+
+/// Retângulo de uma janela (diagnóstico).
+pub fn window_rect(h: isize) -> (i32, i32, i32, i32) {
+    if h == 0 {
+        return (0, 0, 0, 0);
+    }
+    use windows_sys::Win32::Foundation::RECT;
+    use windows_sys::Win32::UI::WindowsAndMessaging::GetWindowRect;
+    let mut r: RECT = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+    unsafe { GetWindowRect(h as HWND, &mut r) };
+    (r.left, r.top, r.right, r.bottom)
+}
+
 /// Classe de uma janela por handle.
 pub fn class_of_hwnd(h: isize) -> String {
     if h == 0 {

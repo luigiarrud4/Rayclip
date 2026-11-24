@@ -277,6 +277,28 @@ export function SettingsPage({
   // depois e regravar o estado velho (o toggle "voltava" sozinho).
   const saveSeq = useRef(0);
 
+  /**
+   * Traduz os avisos do backend. O Rust manda códigos estáveis
+   * (`hotkey-conflict|show|Alt+Space|Ctrl+Shift+V`); texto de erro cru da
+   * biblioteca (`HotKey { mods: Modifiers(ALT), … }`) nunca vai para a tela.
+   */
+  const warningText = (aviso: string): string => {
+    const [codigo, campo, tentado, mantido] = aviso.split("|");
+    const qual = campo === "paste" ? t("Paste shortcut") : t("Open shortcut");
+    if (codigo === "hotkey-conflict") {
+      return t("{field} {key} is already used by another app — kept {kept}", {
+        field: qual,
+        key: tentado,
+        kept: mantido,
+      });
+    }
+    if (codigo === "hotkey-failed") {
+      return t("{field} {key} could not be registered", { field: qual, key: tentado });
+    }
+    // Avisos antigos/desconhecidos: tira o ruído de debug do Windows.
+    return aviso.replace(/HotKey \{[^}]*\}/g, t("shortcut unavailable")).trim();
+  };
+
   const update = async (patch: Partial<Settings>) => {
     if (!cfg) return;
     const seq = ++saveSeq.current;
@@ -295,7 +317,7 @@ export function SettingsPage({
       if (seq !== saveSeq.current) return;
       setSys(status);
       const msg = warnings.length
-        ? t("Saved with warnings: {list}", { list: warnings.join(" · ") })
+        ? t("Saved with warnings: {list}", { list: warnings.map(warningText).join(" · ") })
         : t("Settings saved");
       setToast({ text: msg, kind: warnings.length ? "err" : "ok" });
       onSaved(msg, warnings.length ? "err" : "ok");

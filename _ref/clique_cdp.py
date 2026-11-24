@@ -1,18 +1,19 @@
-"""Clique REAL do Windows muda a seleção? Leitura da verdade pelo CDP.
+"""Clique real do Windows muda a seleção? Verdade medida pelo CDP.
 
-Junta as três peças que estavam quebradas/no lugar errado:
-- `entrada.clicar` (união `INPUT` correta: `SendInput` devolve 1);
-- guarda de foco + `WindowFromPoint` antes do clique;
-- oráculo pelo CDP (`[data-selected="true"]`), não por pixels — pixel não diz
-  *qual* linha ficou selecionada.
-
-Roda com `pythonw` (sem console, que rouba o foco) e grava
-%TEMP%\\clique_cdp.txt.
+Três coisas que já quebraram este teste e agora estão certas:
+- `entrada.py` (união `INPUT` de 40 bytes e coordenadas absolutas normalizadas
+  com origem/tamanho da área virtual, sem a divisão por -1 que jogava todo
+  clique na barra de tarefas);
+- origem da janela somada ao retângulo da linha (o `getBoundingClientRect` é da
+  página, não da tela);
+- o app se esconde ao perder o foco, então a janela é reaberta pelo próprio
+  `.exe` antes de cada clique.
 """
 
 import io
 import json
 import os
+import subprocess
 import sys
 import time
 import urllib.request
@@ -21,9 +22,12 @@ import websocket
 
 import entrada
 import harness_compare as h
+import keysafe
 
+EXE = r"C:\Users\Lugia\Projects\rayclip\src-tauri\target\debug\rayclip.exe"
 SAIDA = os.path.join(os.environ["TEMP"], "clique_cdp.txt")
 linhas = []
+SEL = "(() => { const e = document.querySelector('[data-selected=\"true\"]'); return e ? e.dataset.id : null; })()"
 
 
 def diz(m):
@@ -34,23 +38,16 @@ def diz(m):
 
 class CDP:
     def __init__(self):
-        tid = json.load(urllib.request.urlopen("http://127.0.0.1:9222/json/list", timeout=10))[0]["id"]
+        alvo = json.load(urllib.request.urlopen("http://127.0.0.1:9222/json/list", timeout=10))[0]
         self.ws = websocket.create_connection(
-            "ws://127.0.0.1:9222/devtools/page/" + tid, suppress_origin=True, timeout=20
+            "ws://127.0.0.1:9222/devtools/page/" + alvo["id"], suppress_origin=True, timeout=30
         )
         self.n = 0
 
     def ev(self, js):
         self.n += 1
-        self.ws.send(
-            json.dumps(
-                {
-                    "id": self.n,
-                    "method": "Runtime.evaluate",
-                    "params": {"expression": js, "awaitPromise": True, "returnByValue": True},
-                }
-            )
-        )
+        self.ws.send(json.dumps({"id": self.n, "method": "Runtime.evaluate",
+                                 "params": {"expression": js, "awaitPromise": True, "returnByValue": True}}))
         while True:
             r = json.loads(self.ws.recv())
             if r.get("id") == self.n:
@@ -60,52 +57,65 @@ class CDP:
                 return res["result"].get("value")
 
 
-SEL = "(() => { const e = document.querySelector('[data-selected=\"true\"]'); return e ? e.dataset.id : null; })()"
+def mostrar(espera=6.0):
+    hwnd = h.find_window("rayclip.exe")
+    if hwnd:
+        return hwnd
+    subprocess.Popen([EXE], creationflags=0x08000008, stdin=subprocess.DEVNULL,
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    fim = time.time() + espera
+    while time.time() < fim:
+        time.sleep(0.25)
+        hwnd = h.find_window("rayclip.exe")
+        if hwnd:
+            return hwnd
+    return None
 
 
 def linha_em(c, indice):
-    """Retângulo (pixels de tela) da linha `indice` da lista, e seu id."""
-    js = (
-        "(() => { const e = [...document.querySelectorAll('[data-id]')][%d];"
-        " if (!e) return null; const r = e.getBoundingClientRect();"
-        " return JSON.stringify({x: r.x + r.width / 2, y: r.y + r.height / 2, id: e.dataset.id}); })()"
-        % indice
-    )
+    js = ("(() => { const e = [...document.querySelectorAll('.row')][%d];"
+          " if (!e) return null; const r = e.getBoundingClientRect();"
+          " return JSON.stringify({x: r.x + 110, y: r.y + r.height / 2, id: e.dataset.id}); })()" % indice)
     return json.loads(c.ev(js) or "null")
 
 
 def main():
-    time.sleep(3)
-    hwnd = h.find_window("rayclip.exe")
-    if not hwnd:
-        diz("janela nao encontrada (o app precisa estar visivel)")
-        return
+    import ctypes
+    from ctypes import wintypes as w
+
+    u32 = ctypes.windll.user32
+    time.sleep(1.5)
     c = CDP()
-    diz(f"janela 0x{hwnd:x}")
     for indice in (2, 4, 1):
+        hwnd = mostrar()
+        if not hwnd:
+            diz("janela nao encontrada")
+            return
+        rect = w.RECT()
+        u32.GetWindowRect(hwnd, ctypes.byref(rect))
         alvo = linha_em(c, indice)
         if not alvo:
             diz(f"linha {indice}: nao encontrada")
             continue
-        # coordenadas da linha são de tela; soma a origem da janela já vem no rect
-        x, y = alvo["x"], alvo["y"]
+        x, y = alvo["x"] + rect.left, alvo["y"] + rect.top
         antes = c.ev(SEL)
-        feito = "sem foco"
-        for _ in range(5):
-            hk = __import__("keysafe")
-            hk.focar(hwnd, espera=0.25)
-            if __import__("ctypes").windll.user32.GetForegroundWindow() != hwnd:
-                continue
+        keysafe.focar(hwnd, espera=0.2)
+        fg = u32.GetForegroundWindow()
+        vis = bool(u32.IsWindowVisible(hwnd))
+        b = ctypes.create_unicode_buffer(80)
+        u32.GetClassNameW(fg, b, 80)
+        pid = w.DWORD(0)
+        u32.GetWindowThreadProcessId(fg, ctypes.byref(pid))
+        diz(f"  [diag] hwnd=0x{hwnd:x} visivel={vis} fg=0x{fg:x} classe={b.value} pid_fg={pid.value}")
+        pronto = fg == hwnd and vis
+        if pronto:
             entrada.clicar(x, y)
-            time.sleep(0.45)
-            depois = c.ev(SEL)
-            if depois != antes:
-                feito = "selecionou"
-                break
-            feito = "sem mudanca"
+            time.sleep(0.35)
+        depois = c.ev(SEL)
         diz(
-            f"linha {indice} em ({x:.0f},{y:.0f}): {feito} | antes={(antes or '')[:8]} "
-            f"depois={(c.ev(SEL) or '')[:8]} esperado={alvo['id'][:8]}"
+            f"linha {indice} em ({x:.0f},{y:.0f}): janela_pronta={pronto} "
+            f"antes={(antes or '')[:8]} depois={(depois or '')[:8]} esperado={alvo['id'][:8]} "
+            f"{'OK' if depois == alvo['id'] else 'FALHOU'}"
         )
 
 

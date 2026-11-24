@@ -377,6 +377,12 @@ Object.assign(PT, {
 
   // avisos e detalhes
   "Saved with warnings: {list}": "Salvo com avisos: {list}",
+  "Open shortcut": "Atalho de abrir",
+  "Paste shortcut": "Atalho de colar",
+  "{field} {key} is already used by another app — kept {kept}":
+    "{field} {key} já está em uso por outro app — mantive {kept}",
+  "{field} {key} could not be registered": "{field} {key} não pôde ser registrado",
+  "shortcut unavailable": "atalho indisponível",
   "Encrypted": "Criptografado",
   "Unavailable": "Indisponível",
   "GIF · animated": "GIF · animado",

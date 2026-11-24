@@ -59,20 +59,69 @@ def _enviar(inp):
         raise RuntimeError(f"SendInput falhou (erro {ctypes.get_last_error()})")
 
 
+# Índices do GetSystemMetrics (WinUser.h):
+#   76 = SM_XVIRTUALSCREEN, 77 = SM_YVIRTUALSCREEN (origem da área virtual)
+#   78 = SM_CXVIRTUALSCREEN, 79 = SM_CYVIRTUALSCREEN (tamanho)
+# Trocar tamanho por origem dava divisão por -1 e todo clique ia para (0, 1079)
+# — a barra de tarefas. Isso já foi confundido com "o app se fecha ao clicar".
+SM_VIRTUAL = (76, 77, 78, 79)
+
+
+def _normalizado(x, y):
+    ox, oy = user32.GetSystemMetrics(76), user32.GetSystemMetrics(77)
+    vx, vy = user32.GetSystemMetrics(78), user32.GetSystemMetrics(79)
+    if vx <= 1 or vy <= 1:
+        raise RuntimeError("area virtual da tela invalida")
+    return int((x - ox) * 65535 / (vx - 1)), int((y - oy) * 65535 / (vy - 1))
+
+
 def clicar(x, y):
     """Clique esquerdo em coordenadas absolutas de tela."""
-    vx, vy = user32.GetSystemMetrics(76), user32.GetSystemMetrics(77)
-    ax, ay = int(x * 65535 / (vx - 1)), int(y * 65535 / (vy - 1))
-    for flag in (0x0001 | 0x8000, 0x0002 | 0x8000, 0x0004 | 0x8000):
+    ax, ay = _normalizado(x, y)
+    for flag in (0x0001 | 0x8000 | 0x4000, 0x0002 | 0x8000 | 0x4000, 0x0004 | 0x8000 | 0x4000):
         # MOVE | ABSOLUTE, depois DOWN e UP na posição
         inp = INPUT(type=0, u=_UNIAO(mi=MOUSEINPUT(ax, ay, 0, flag, 0, 0)))
         _enviar(inp)
 
 
-def tecla(vk, gap=0.02):
+def tecla(vk, gap=0.02, cima=True):
+    """Aperta e solta uma tecla virtual (`cima=False` segura para Ctrl/Shift)."""
     """Aperta e solta uma tecla virtual."""
     import time
 
+    if not cima:
+        _enviar(INPUT(type=1, u=_UNIAO(ki=KEYBDINPUT(vk, 0, 0, 0, 0))))
+        return
     for flag in (0, 0x0002):
         _enviar(INPUT(type=1, u=_UNIAO(ki=KEYBDINPUT(vk, 0, flag, 0, 0))))
         time.sleep(gap)
+
+
+def _abs(x, y):
+    return _normalizado(x, y)
+
+
+def mover(x, y):
+    """Move o cursor sem botão apertado."""
+    ax, ay = _abs(x, y)
+    _enviar(INPUT(type=0, u=_UNIAO(mi=MOUSEINPUT(ax, ay, 0, 0x0001 | 0x8000 | 0x4000, 0, 0))))
+
+
+def baixo(x=None, y=None):
+    """Aperta o botão esquerdo (opcionalmente já na posição x,y)."""
+    if x is not None:
+        mover(x, y)
+    ax, ay = _abs(*_cursor())
+    _enviar(INPUT(type=0, u=_UNIAO(mi=MOUSEINPUT(ax, ay, 0, 0x0002 | 0x8000 | 0x4000, 0, 0))))
+
+
+def cima():
+    """Solta o botão esquerdo onde o cursor estiver."""
+    ax, ay = _abs(*_cursor())
+    _enviar(INPUT(type=0, u=_UNIAO(mi=MOUSEINPUT(ax, ay, 0, 0x0004 | 0x8000 | 0x4000, 0, 0))))
+
+
+def _cursor():
+    pt = w.POINT()
+    user32.GetCursorPos(ctypes.byref(pt))
+    return pt.x, pt.y

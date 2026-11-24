@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { NavBar } from "./components/NavBar";
-import { EntryList } from "./components/EntryList";
+import { EntryList, arrastandoAgora } from "./components/EntryList";
 import { DetailsPane } from "./components/DetailsPane";
 import { ActionBar } from "./components/ActionBar";
 import { SettingsPage } from "./components/SettingsPage";
@@ -139,6 +139,10 @@ export default function App() {
    */
   const refresh = useCallback(
     async (keepSelection = true) => {
+      // Durante um arrasto para fora, re-renderizar troca a linha sob o cursor e
+      // o Chromium cancela o arrasto. A lista volta a atualizar no próximo
+      // refresh (o arrasto dura menos de um segundo).
+      if (arrastandoAgora()) return;
       const { query: q, filter: f } = consulta.current;
       const sel = selecionadoRef.current;
       const page = await api.searchEntries(q, f, 0, PAGE);

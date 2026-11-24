@@ -836,6 +836,103 @@ legível em disco; clique seleciona / duplo clique cola; `Backspace` na busca n�
 apaga nada.
 
 Tabela completa de mais de 30 testes com resultados: ver `README.md`.
+### 8.49 Arrastar para fora, temas quebrados e moldura nativa (v0.1.37/0.1.38)
+
+Três pedidos do usuário, cada um com uma causa diferente — e, de novo, quase
+todo o tempo gasto foi no **harness**, não no app.
+
+#### (a) Arrastar uma entrada para fora do app
+
+O Explorer só aceita arquivo (`CF_HDROP`). A primeira tentativa foi `DoDragDrop`
+por OLE com `SHCreateDataObject`, que **nunca voltava**: o laço modal precisa da
+fila de mensagens da thread que *possui* a janela, e a janela aqui é do WebView2.
+Rodar na thread principal também travou, e durante o arrasto a janela aparecia
+como invisível (`IsWindowVisible` = `false`) sem que nada no código a escondesse.
+
+O caminho que funciona é o **arrasto do próprio Chromium** (`DownloadURL`):
+
+```ts
+e.dataTransfer.setData("DownloadURL", `${mime}:${nome}:${url}`);
+```
+
+- `url` é um **`blob:`** criado de base64, não um `data:` — um `data:` de 500 KB
+  fazia o Chromium cancelar o arrasto no mesmo instante (`dragstart` seguido de
+  `dragend`, arquivo nenhum criado);
+- o payload vem do Rust (`drag_payload`) e é **adiantado no hover** (250 ms
+  parado) porque o `dragstart` precisa dele síncrono; sem payload pronto o
+  `onDragStart` chama `preventDefault()`;
+- o cache é um `Map` por id, fora do componente: durante o arrasto o mouse
+  atravessa outras linhas e cada `mouseenter` pediria outro payload;
+- `text/plain` (e `text/uri-list` para links) vai **junto** do `DownloadURL`,
+  então soltar no Notepad/Word/Discord cola o texto, e soltar numa pasta cria o
+  arquivo;
+- `ARRASTANDO` (flag no Rust) e `arrastandoAgora()` (no frontend) impedem que a
+  janela esconda e que a lista se re-renderize no meio do gesto — re-renderizar
+  troca a linha sob o cursor e cancela o arrasto.
+
+Medidos: imagem de 500 KB -> arquivo de **497.252 bytes** idêntico na pasta do
+Explorer; texto -> Notepad com o texto exato (Ctrl+A, Ctrl+C, `Get-Clipboard`);
+`drag payload` de 18 a 40 ms (antes, reencodando PNG, 170 ms).
+
+O travamento relatado ("não respondendo" ao clicar num `.zip`) era o payload
+sendo lido **síncrono no hover**: `fs::read` do zip inteiro + base64 na hora.
+Agora `drag_payload` é `async` e roda em `spawn_blocking`, com teto de
+**32 MB** (acima disso o arrasto é recusado e fica só uma linha no log). Medido
+com um zip de 120 MB: hover e clique com `SendMessageTimeout` + `IsHungAppWindow`
+respondendo sempre.
+
+Uma entrada de texto que **é** um caminho de arquivo (`"C:\...\foto.png"`) agora
+arrasta o arquivo de verdade: antes saía `... .txt` com o caminho dentro. A
+extensão, o nome e o tipo vêm do arquivo (`caminho_do_texto`), e o mesmo vale
+para entradas com `paths`.
+
+#### (b) Texto ilegível nos temas claros
+
+`_ref/audit_temas.py` percorre cada nó de texto nos 5 temas, descobre a cor de
+fundo realmente pintada subindo o DOM e calcula contraste WCAG. Causa: superfícies
+fixas em tema escuro (`.panel` `rgb(24 24 26 / .97)`, `.filter-menu`,
+`.dropdown-menu`, `.settings-toast`). Corrigido com os tokens
+`--surface-raised`, `--surface-menu`, `--surface-toast`, `--window-bg` e cores
+semânticas próprias do tema claro (`--red: #c4281f`, `--yellow: #7a5a00`...).
+Resultado: **0 textos abaixo de 3.0** em lista, painel de ações (`Ctrl+K`), menu
+de tipo e as 3 abas das Preferências, nos 5 temas.
+
+Armadilha do próprio auditor: as transições de cor de 130 ms fazem o contraste
+ser medido no meio da animação (17 "falhas" falsas); o script injeta
+`*{transition:none!important;animation:none!important}` antes de medir.
+
+#### (c) Botões de minimizar/maximizar/fechar no PC do amigo
+
+`decorations: false` não basta em todo Windows: a moldura pode voltar. A
+tentativa com `SetWindowLong(GWL_STYLE)` (`WS_POPUP | WS_THICKFRAME`) resolveu a
+moldura e **quebrou o teste de acerto do mouse** — `WindowFromPoint` passou a
+devolver a barra de tarefas e o hook de clique passou a esconder a janela a cada
+clique. A versão que ficou não mexe no estilo:
+`DwmSetWindowAttribute(DWMWA_NCRENDERING_POLICY, DWMNCRP_DISABLED)`
+(`strip_caption_sem_quebrar`, §8.49c), que desliga a moldura desenhada pelo DWM
+sem alterar o `WS_*` que o Windows usa para decidir onde o clique cai.
+
+#### Os erros do harness (de novo, e todos meus)
+
+1. `GetSystemMetrics(76/77)` é a **origem** da área virtual (0,0), não o tamanho
+   — o cálculo virava divisão por −1 e **todo** clique sintético ia para
+   `(0, 1079)`, a barra de tarefas. Daí a impressão de "o app esconde quando
+   clico" e o clique que caiu no Discord. O certo é 78/79 para tamanho e 76/77
+   para origem, com `MOUSEEVENTF_VIRTUALDESK`.
+2. `getBoundingClientRect` é da **página**; faltava somar a origem da janela.
+3. `keysafe.focar` sem conferir `GetForegroundWindow` de novo: o console do
+   agente roubava o foco entre a medição e o clique.
+4. O `Popen` de uma segunda instância **reinicia** o app (instância única): as
+   coordenadas medidas na página antiga deixavam de valer.
+
+#### (d) Aviso de atalho em conflito
+
+`apply_shortcuts` devolvia o erro cru do plugin
+(`HotKey { mods: Modifiers(ALT), key: Space, id: 65598 }`) na UI. Agora devolve
+códigos estáveis — `hotkey-conflict|<campo>|<tentado>|<mantido>` e
+`hotkey-failed|<campo>|<tecla>` — e o atalho em conflito **volta** para o último
+que funcionava (`ATALHOS_ATIVOS`), com tradução em EN/pt-BR.
+
 ### 8.47 Regressão: clicar numa linha não selecionava (v0.1.35)
 
 Sintoma relatado: "o clique de selecionar não funciona mais, ele se recusa".

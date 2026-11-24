@@ -90,3 +90,17 @@ export const saveEntryAs = (id: string, format: string) =>
 /** Salva várias entradas de uma vez, cada uma no formato escolhido. */
 export const saveMany = (items: SaveItem[]) =>
   invoke<string[] | null>("save_many", { items });
+
+/**
+ * Arrasto para fora do app (Explorer, pasta, Discord, Photoshop…).
+ * O arrasto em si é do Chromium (`DownloadURL` → `CF_HDROP`); o backend só
+ * entrega nome, tipo e os bytes em base64.
+ */
+export const dragPayload = (id: string) =>
+  invoke<{ name: string; mime: string; data: string; text: string | null; link: boolean }>(
+    "drag_payload",
+    { id }
+  );
+/** Marca o começo/fim do arrasto para a janela não esconder no meio. */
+export const dragStart = () => invoke<void>("drag_start");
+export const dragEnd = () => invoke<void>("drag_end");

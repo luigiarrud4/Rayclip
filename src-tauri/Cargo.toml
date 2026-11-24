@@ -1,6 +1,6 @@
 [package]
 name = "rayclip"
-version = "0.1.36"
+version = "0.1.38"
 description = "Clipboard History - recriacao do Raycast Clipboard"
 edition = "2021"
 rust-version = "1.77"
