@@ -56,6 +56,7 @@ pub fn matches_filter(e: &Entry, filter: &str) -> bool {
     match filter {
         "text" => e.kind == "text",
         "image" => e.kind == "image",
+        "video" => e.kind == "video",
         "file" => matches!(
             e.kind.as_str(),
             "file" | "files" | "pdf" | "video" | "audio" | "archive"
@@ -290,6 +291,9 @@ mod testes {
         assert!(!matches_filter(&img, "text"));
         assert!(matches_filter(&img, "image"));
         assert!(matches_filter(&link, "link"));
+        let video = e("4", "video", "a.mp4", "", 1);
+        assert!(matches_filter(&video, "video"));
+        assert!(!matches_filter(&video, "image"));
         assert!(matches_filter(&pdf, "file"));
         assert!(matches_filter(&pdf, "all"));
     }

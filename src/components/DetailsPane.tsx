@@ -207,7 +207,10 @@ export function DetailsPane({
         </div>
       )}
 
-      {entry.kind !== "image" && !color && !isText && entry.hasThumb && (
+      {/* Vídeo/áudio não mostram a miniatura solta: o `<video>` logo abaixo já
+          pinta o mesmo quadro como `poster`. Sem esta condição o painel exibia
+          duas prévias iguais, uma imagem e um player. */}
+      {!temMidia && entry.kind !== "image" && !color && !isText && entry.hasThumb && (
         <div className="preview">
           <img
             src={mediaUrl("thumb", entry.id, entry.createdAt)}

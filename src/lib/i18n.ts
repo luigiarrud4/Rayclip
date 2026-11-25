@@ -140,6 +140,7 @@ const PT: Record<string, string> = {
   // ------------------------------------------------------------- barra de cima
   "Type to filter entries…": "Digite para filtrar as entradas…",
   "All Types": "Todos os tipos",
+  "Videos Only": "Somente vídeos",
   "Text Only": "Somente texto",
   "Images Only": "Somente imagens",
   "Files Only": "Somente arquivos",

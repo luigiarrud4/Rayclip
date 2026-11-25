@@ -60,6 +60,14 @@ export const ImageIcon = svg(
   </>
 );
 
+/** Vídeo: moldura com o triângulo de play. */
+export const VideoIcon = svg(
+  <>
+    <rect x="2.2" y="3.2" width="11.6" height="9.6" rx="2" {...S} />
+    <path d="M6.7 6.3v3.4l2.9-1.7z" {...S} />
+  </>
+);
+
 export const LinkIcon = svg(
   <>
     <path
@@ -212,9 +220,10 @@ export const KindIcon = ({ kind }: { kind: string }) => {
       return <DropperIcon />;
     case "files":
       return <FilesIcon />;
+    case "video":
+      return <VideoIcon />;
     case "file":
     case "pdf":
-    case "video":
     case "audio":
     case "archive":
       return <FileIcon />;

@@ -8,11 +8,11 @@ dele é usado; só o resultado visual e funcional foi reproduzido.
 
 - Pasta do projeto: `C:\Users\Lugia\Projects\rayclip`
 - Stack: **Tauri v2 (Rust) + React + TypeScript + WebView2**
-- Versão atual: **0.1.43**
+- Versão atual: **0.1.44**
 - Binário: `src-tauri/target/release/rayclip.exe` (11.124.224 B, SHA256
-  `98f1bee09e8eed7594c16f8dfa3b5f93253329a8101c0d2f6b76459c16109823`)
-- Instalador: `src-tauri/target/release/bundle/nsis/Rayclip_0.1.43_x64-setup.exe`
-  (3.813.837 B)
+  `2b2ebc5920ce94f3bb39c4242e20a3d1b2d6a7b2962f3fb88a47b696778b8b8f`)
+- Instalador: `src-tauri/target/release/bundle/nsis/Rayclip_0.1.44_x64-setup.exe`
+  (3.814.968 B)
 
 Este documento explica **o que o app faz, como é feito por dentro e como cada
 problema difícil foi resolvido** (com a medição usada para provar).
@@ -837,6 +837,46 @@ legível em disco; clique seleciona / duplo clique cola; `Backspace` na busca n�
 apaga nada.
 
 Tabela completa de mais de 30 testes com resultados: ver `README.md`.
+### 8.58 Filtro "Somente vídeos" e a prévia duplicada do vídeo (v0.1.44)
+
+Dois ajustes que o usuário pediu depois de abrir um `.mp4` no app.
+
+#### 1. Faltava um tipo "vídeos" no filtro
+
+A lista de tipos tinha texto, imagem, arquivos, links, e-mails e cores. Vídeo
+caía dentro de **Arquivos**, junto com pdf, zip e afins — quem quer achar um
+vídeo tinha de varrer tudo.
+
+Agora existe **Somente vídeos** (`FilterId = "video"`), logo depois de
+*Somente imagens*: `matches_filter` passou a ter `"video" => e.kind == "video"`
+e o ícone novo `VideoIcon` (moldura com o triângulo de play) aparece também na
+lista, no lugar do arquivo genérico.
+
+**Arquivos continua incluindo vídeo de propósito**: é o filtro "tudo que é
+arquivo", e tirar o vídeo de lá quebraria quem usa "Somente arquivos" para ver
+o que baixou. O filtro novo é **adicional**.
+
+Medido com o dropdown de verdade (`_ref/teste_filtro_video.py`): o menu lista 8
+opções (`Todos os tipos … Somente cores`), e escolher *Somente vídeos* deixa
+exatamente os dois `.mp4` da base, com o rótulo do botão em pt-BR.
+
+#### 2. O vídeo aparecia duas vezes
+
+O painel desenhava a miniatura solta (bloco `entry.hasThumb`) **e** o
+`<video>` cujo `poster` é a mesma miniatura. Resultado: aquele quadro parado em
+cima e o player logo abaixo — exatamente o que o print do usuário mostrou.
+
+Correção: a miniatura genérica é pulada quando `temMidia` é verdadeiro (prefixo
+`!temMidia` na condição). O `poster` do player já pinta o primeiro quadro, então
+nada de informação se perde.
+
+Medido: `.details .preview` com mídia dentro → **1** (`preview preview-media`),
+`<img>` solta → **0**, `<video>` → 1, altura 260 px. O cartão de arquivo que
+aparece abaixo do player (ícone, nome, tamanho) é **informação**, não prévia.
+
+`cargo test --lib` 61/61 · `cargo clippy --all-targets` 0 avisos · `npx tsc
+--noEmit` 0.
+
 ### 8.57 GIF de link que não carregava: teto que truncava e site atrás do Cloudflare (v0.1.43)
 
 O usuário mandou um print: um link do **klipy.com** abria o cartão sem prévia.

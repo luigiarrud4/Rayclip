@@ -513,6 +513,13 @@ copiou, então se o gerenciador não publicar o marcador o conteúdo entra no
 histórico dele. A decisão fica nossa, de propósito, e o interruptor "Also capture
 passwords & protected content" desliga o filtro quando você quiser.
 
+### Novidades da v0.1.44 — filtro de vídeos e prévia única
+
+- **Somente vídeos** entrou no menu de tipos (antes o vídeo só aparecia em
+  *Somente arquivos*). *Arquivos* continua incluindo vídeo de propósito.
+- O painel mostrava a **miniatura solta e o player** logo abaixo, os dois com o
+  mesmo quadro. Agora é só o player (a miniatura é o `poster` dele).
+
 ### Novidades da v0.1.43 — GIFs de link que não apareciam
 
 - **Três defeitos no mesmo caminho**, todos medidos: a capa era baixada com teto
