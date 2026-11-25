@@ -424,9 +424,47 @@ fn pasta(exe: &Path) -> String {
 ///
 /// Se o novo não ficar de pé (antivírus, exe truncado), o `.old` volta a ser
 /// `rayclip.exe` e o erro é devolvido — quem chamou continua rodando.
+/// O arquivo tem cabeçalho de executável? (MZ + assinatura PE)
+///
+/// Sem esta checagem, um download truncado ou um arquivo posto em quarentena
+/// pelo antivírus chega ao `CreateProcess`, que em alguns casos abre uma caixa
+/// de erro do Windows em vez de devolver erro — e o Rayclip fica esperando
+/// para sempre, sem dizer nada. A conferência é de 2 bytes + 4 no offset.
+fn parece_exe(exe: &Path) -> bool {
+    use std::io::{Read, Seek, SeekFrom};
+    let Ok(mut f) = std::fs::File::open(exe) else {
+        return false;
+    };
+    let mut cab = [0u8; 2];
+    if f.read_exact(&mut cab).is_err() || &cab != b"MZ" {
+        return false;
+    }
+    let mut off = [0u8; 4];
+    if f.seek(SeekFrom::Start(0x3c)).is_err() || f.read_exact(&mut off).is_err() {
+        return false;
+    }
+    let pe = u32::from_le_bytes(off) as u64;
+    if !(0x40..=0x1000_0000).contains(&pe) {
+        return false;
+    }
+    if f.seek(SeekFrom::Start(pe)).is_err() {
+        return false;
+    }
+    let mut assinatura = [0u8; 4];
+    f.read_exact(&mut assinatura).is_ok() && &assinatura == b"PE\0\0"
+}
+
 pub fn relaunch(exe: &Path) -> Result<(), String> {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+    if !parece_exe(exe) {
+        return Err(desfazer(
+            exe,
+            "the downloaded file is not a valid program, usually because antivirus blocked or truncated it"
+                .to_string(),
+        ));
+    }
 
     let mut filho = match std::process::Command::new(exe)
         .arg(AFTER_UPDATE_FLAG)
@@ -674,6 +712,20 @@ mod tests {
         assert!(res.is_err(), "deveria recusar um exe invalido");
         assert_eq!(std::fs::read(&exe).unwrap(), b"antigo");
         assert!(!sibling(&exe, ".old").exists());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn arquivo_que_nao_e_programa_nao_chega_no_spawn() {
+        let d = tmp("pe");
+        let falso = d.join("falso.exe");
+        std::fs::write(&falso, b"nao sou um exe").unwrap();
+        assert!(!parece_exe(&falso));
+        let truncado = d.join("truncado.exe");
+        std::fs::write(&truncado, b"MZ").unwrap();
+        assert!(!parece_exe(&truncado));
+        // O próprio binário de teste é um PE de verdade.
+        assert!(parece_exe(&std::env::current_exe().unwrap()));
         let _ = std::fs::remove_dir_all(&d);
     }
 

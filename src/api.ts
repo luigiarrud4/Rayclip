@@ -122,3 +122,10 @@ export const dragEnd = () => invoke<void>("drag_end");
  * link) — nesse caso a linha continua arrastando pelo Chromium.
  */
 export const dragFiles = (id: string) => invoke<string[]>("drag_files", { id });
+
+/**
+ * Cola vários **arquivos** de uma vez: uma `CF_HDROP` com todos os caminhos e
+ * uma única colagem, em vez de N colagens em sequência.
+ */
+export const pasteFiles = (ids: string[], keepOpen = false) =>
+  invoke<number>("paste_files", { ids, keepOpen });

@@ -426,7 +426,14 @@ export default function App() {
     [attempt, cfg?.pastePlainDefault, t]
   );
 
-  /** Cola várias entradas em ordem (Ctrl/Shift+clique marcam, Enter cola). */
+  /**
+   * Cola várias entradas em ordem (Ctrl/Shift+clique marcam, Enter cola).
+   *
+   * Seleção **só de arquivos/imagens** (`paths` no disco ou imagem no banco) vai
+   * por `pasteFiles`: uma `CF_HDROP` com todos os caminhos e **uma** colagem, que
+   * é o que o Explorer entende como "cole estes N arquivos aqui". Qualquer outro
+   * caso (texto, link, cor, misturado) continua colando em sequência.
+   */
   const pasteSelection = useCallback(
     async (plain = false, keepOpen = false) => {
       if (selection.length < 2) return false;
@@ -434,16 +441,26 @@ export default function App() {
       setPanelOpen(false);
       setFmtOpen(false);
       const count = selection.length;
+      const escolhidas = selection
+        .map((id) => entries.find((e) => e.id === id))
+        .filter((e): e is Entry => !!e);
+      const soArquivos =
+        !asPlain &&
+        escolhidas.length === count &&
+        escolhidas.every((e) => e.paths.length > 0 || e.hasImage);
       setSelection([]);
       await attempt(
-        t("Paste {n} items in order", { n: count }),
-        () => api.pasteMany(selection, asPlain, keepOpen),
-        t("{n} items pasted in order", { n: count })
+        t(soArquivos ? "Paste {n} files" : "Paste {n} items in order", { n: count }),
+        () =>
+          soArquivos
+            ? api.pasteFiles(selection, keepOpen)
+            : api.pasteMany(selection, asPlain, keepOpen),
+        t(soArquivos ? "{n} files pasted" : "{n} items pasted in order", { n: count })
       );
       setQuery("");
       return true;
     },
-    [attempt, cfg?.pastePlainDefault, selection, t]
+    [attempt, cfg?.pastePlainDefault, entries, selection, t]
   );
 
   const saveAs = useCallback(

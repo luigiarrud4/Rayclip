@@ -19,7 +19,9 @@ fn now_ms() -> i64 {
         .unwrap_or(0)
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+// `Default` existe para os testes montarem uma entrada mínima sem listar
+// vinte campos; nada em produção usa entrada "vazia".
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Entry {
     pub id: String,
@@ -811,8 +813,10 @@ mod tests {
     #[test]
     fn fixados_entram_no_topo_e_reordenam() {
         // Sem banco: `touch` não grava nada e a lógica de ordem é testável.
-        let mut s = Store::default();
-        s.entries = vec![entry("a", 3), entry("b", 2), entry("c", 1)];
+        let mut s = Store {
+            entries: vec![entry("a", 3), entry("b", 2), entry("c", 1)],
+            ..Store::default()
+        };
 
         s.toggle_pin("a");
         s.toggle_pin("c");

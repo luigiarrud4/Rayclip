@@ -150,6 +150,7 @@ fn casa(c: &Campos, q: &str) -> bool {
     c.visiveis.iter().any(|f| f.contains(q)) || c.ocr.as_deref().is_some_and(|o| o.contains(q))
 }
 
+#[cfg(test)]
 pub fn matches_query(e: &Entry, q: &str) -> bool {
     if q.is_empty() {
         return true;
@@ -158,6 +159,7 @@ pub fn matches_query(e: &Entry, q: &str) -> bool {
 }
 
 /// True quando a busca só casou com o texto lido de dentro da imagem.
+#[cfg(test)]
 pub fn matched_only_in_ocr(e: &Entry, q: &str) -> bool {
     let c = campos(e);
     if q.is_empty() {

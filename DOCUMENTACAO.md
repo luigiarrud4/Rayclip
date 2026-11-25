@@ -8,12 +8,11 @@ dele é usado; só o resultado visual e funcional foi reproduzido.
 
 - Pasta do projeto: `C:\Users\Lugia\Projects\rayclip`
 - Stack: **Tauri v2 (Rust) + React + TypeScript + WebView2**
-- Versão atual: **0.1.39** (publicada em
-  <https://github.com/luigiarrud4/Rayclip/releases/tag/v0.1.39>)
-- Binário: `src-tauri/target/release/rayclip.exe` (11.049.984 B, SHA256
-  `8e80fdbf932c1e354286312ce7a0896665e14ed3b6f89044258b0448474c65be`)
-- Instalador: `src-tauri/target/release/bundle/nsis/Rayclip_0.1.39_x64-setup.exe`
-  (3.791.598 B)
+- Versão atual: **0.1.40**
+- Binário: `src-tauri/target/release/rayclip.exe` (11.055.616 B, SHA256
+  `f239d4221766fef44d524d1970a478bbfae4c23a443a25ef9b3d1a65937b9a99`)
+- Instalador: `src-tauri/target/release/bundle/nsis/Rayclip_0.1.40_x64-setup.exe`
+  (3.793.105 B)
 
 Este documento explica **o que o app faz, como é feito por dentro e como cada
 problema difícil foi resolvido** (com a medição usada para provar).
@@ -838,6 +837,87 @@ legível em disco; clique seleciona / duplo clique cola; `Backspace` na busca n�
 apaga nada.
 
 Tabela completa de mais de 30 testes com resultados: ver `README.md`.
+### 8.54 Colar vários arquivos de uma vez (v0.1.40)
+
+Multi-seleção já existia, mas só para **texto**: `paste_many` copia um item,
+cola, copia o próximo, cola… Em três arquivos isso vira três colagens, e o
+clipboard termina com o último. Não é o que o Explorer entende por "cole estes
+três arquivos aqui".
+
+Agora, quando **todas** as entradas marcadas têm arquivo (`paths` no disco ou
+imagem guardada no banco), o comando novo `paste_files` faz o que o Windows
+espera: **uma** `CF_HDROP` com todos os caminhos e **uma** colagem.
+
+| Seleção | Caminho usado |
+| --- | --- |
+| tudo arquivo/imagem | `paste_files` — uma `CF_HDROP`, uma colagem |
+| misto, texto, link, cor | `paste_many` — em sequência, como antes |
+| "Paste as plain text" | sempre `paste_many` (arquivo não tem versão texto) |
+
+O `FileList` do `clipboard-win` já era usado para colar **uma** entrada de
+arquivo; era só agregar. Imagem que só existe no banco cifrado é materializada
+em `<dados>/drag/<id>.<ext>` pelo mesmo caminho do arrasto — daí a extração do
+`arquivos_da_entrada()`, agora usado pelo arrasto **e** pela colagem.
+
+Sequência de eventos: escreve a lista → registra a sequência para o watcher não
+re-capturar nossa própria escrita → sobe as entradas para o topo (ordem da
+seleção) → esconde a janela (ou mantém, com `keep_open`) → **uma** colagem sob
+`PASTE_LOCK` → evento `clipboard:multi-pasted`.
+
+#### O defeito que a revisão pegou junto
+
+`drag_files`/`paste_files` liam `entry.paths.first()`. Um item que representa
+**três** arquivos (copiar três no Explorer cria um item só, `kind = "files"`)
+arrastava e colava **um** dos três, em silêncio. Agora `arquivos_da_entrada()`
+devolve todos os caminhos, e a colagem junta os de todas as entradas marcadas na
+ordem da seleção.
+
+#### Medição
+
+- `_ref/teste_colar_arquivos.py`: três arquivos copiados separadamente (três
+  itens do histórico) → Ctrl+clique nos três → `Enter` com o Explorer na frente
+  → **um** `paste_files n=3` no log, uma colagem, os três arquivos na pasta com
+  bytes idênticos. `RESULTADO: OK` no build instalado 0.1.40.
+- Armadilha do harness que vale registrar: `Ctrl` apertado **antes** do primeiro
+  clique vai para o app que tinha o foco (o Explorer), e o WebView recebe o
+  clique com `ctrlKey=false` — a seleção é substituída em vez de somada. O Ctrl
+  tem que descer depois que o app já está em foco. E `data-selected` marca só a
+  linha primária: quem conta seleção múltipla é `data-multi`.
+- `cargo test --lib`: **52/52**; `cargo clippy --all-targets`: **0 avisos**.
+
+### 8.55 Revisão do código inteiro: quatro defeitos e o que ficou de fora
+
+Passada de revisão sobre `src-tauri/src` e `src` (17 mil linhas).
+
+1. **Atualizador podia pendurar para sempre.** O teste
+   `update::tests::exe_que_nao_sobe_volta_para_o_antigo` ficou mais de 60 s
+   "rodando" — o `CreateProcess` de um arquivo que não é PE às vezes abre caixa
+   de erro do Windows em vez de devolver erro, e o app esperava. Agora
+   `parece_exe()` confere `MZ` + assinatura `PE\0\0` (2 bytes e 4 no offset
+   0x3C) **antes** de lançar; arquivo truncado ou em quarentena vira a mensagem
+   "the downloaded file is not a valid program" e o rollback do `.old` acontece
+   na hora. Era bug de verdade, escondido atrás de um teste que travava.
+2. **Entrada de vários arquivos entregava um só** (ver §8.54).
+3. **Código morto perigoso.** `strip_caption()` — o caminho `WS_POPUP` que
+   **quebra** `WindowFromPoint` (todo clique escondia a janela) — continuava no
+   arquivo com um comentário "não usar". Foi apagado junto das constantes
+   `WS_CAPTION`/`WS_THICKFRAME`/`WS_POPUP`/`WS_SYSMENU`; o escolhido,
+   `strip_caption_sem_quebrar()` (DWM), ficou. Saíram também `cursor_point()` e
+   `window_rect()` (diagnóstico sem uso).
+4. **Mensagens de erro em dois idiomas.** Strings de retorno iam direto ao toast
+   (`"arquivo sumiu do disco"`) no meio de uma UI em inglês. Padronizadas em
+   inglês, com o teste de caminho de rede acompanhando.
+
+Também: `matches_query`/`matched_only_in_ocr` só existem para os testes →
+`#[cfg(test)]`; quatro `return` finais viraram expressão de cauda; teste do
+`Store` usa `..Default::default()`.
+
+**O que ficou de fora, de propósito:** `lib.rs` tem ~3.800 linhas e mistura
+comandos de colagem, de salvamento, de OCR, de link e a montagem da janela. A
+divisão em módulos é mecânica mas mexe em ~40 comandos; fazer isso junto com
+funcionalidade nova aumenta o risco sem ganho visível. Fica como tarefa própria,
+com o harness atual como rede de proteção.
+
 ### 8.53 Arrasto grande fechado, verificado e publicado (v0.1.39)
 
 Fecho do ciclo do §8.50. A solução que ficou **não** é OLE à mão: é o crate

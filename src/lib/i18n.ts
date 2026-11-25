@@ -95,6 +95,8 @@ const PT: Record<string, string> = {
   "Save failed — {msg}": "Falha ao salvar — {msg}",
   "Paste {n} items in order": "Colar {n} itens em ordem",
   "{n} items pasted in order": "{n} itens colados em ordem",
+  "Paste {n} files": "Colar {n} arquivos",
+  "{n} files pasted": "{n} arquivos colados",
   "Delete {n} entries?": "Apagar {n} entradas?",
 
   // --------------------------------------------------------- ações (painel)

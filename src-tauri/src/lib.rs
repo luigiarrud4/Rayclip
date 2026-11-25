@@ -229,10 +229,10 @@ fn b64_decode(texto: &str) -> Option<Vec<u8>> {
 fn caminho_de_arrasto(p: &std::path::Path) -> Result<String, String> {
     let s = p.to_string_lossy().to_string();
     if s.starts_with("\\\\") {
-        return Err("caminho de rede: arrasto pelo Chromium".into());
+        return Err("network path: Chromium drag instead".into());
     }
     if !p.is_file() {
-        return Err("arquivo sumiu do disco".into());
+        return Err("the file is gone from disk".into());
     }
     Ok(s)
 }
@@ -252,7 +252,7 @@ async fn drag_files(state: State<'_, AppState>, id: String) -> Result<Vec<String
     let (entry, imagem, dir) = {
         let store = lock_store(&state.store);
         let Some(e) = store.get(&id).cloned() else {
-            return Err("entrada sumiu".into());
+            return Err("entry not found".into());
         };
         let img = if e.has_image {
             store.image_bytes(&id)
@@ -261,50 +261,16 @@ async fn drag_files(state: State<'_, AppState>, id: String) -> Result<Vec<String
         };
         (e, img, store.dir.clone())
     };
-
-    // Caminho utilizável pelo plugin de arrasto: local e existente.
-    fn caminho_util(p: std::path::PathBuf) -> Result<String, String> {
-        caminho_de_arrasto(&p)
-    }
-
-    // 1) Arquivo do disco: entrega o caminho, sem ler um byte sequer.
-    if let Some(p) = entry.paths.first().map(std::path::PathBuf::from) {
-        if p.is_file() {
-            return caminho_util(p).map(|c| vec![c]);
-        }
-    }
-
-    // 2) Texto que **é** um caminho de arquivo: o arquivo, não o texto.
-    if let Some(p) = caminho_do_texto(&entry) {
-        if p.is_file() {
-            return caminho_util(p).map(|c| vec![c]);
-        }
-    }
-
-    // 3) Imagem/GIF guardado no banco: materializa no disco uma vez.
-    let Some(imagem) = imagem else {
-        return Err("sem arquivo para arrastar".into());
-    };
-    let pasta = dir.join("drag");
-    std::fs::create_dir_all(&pasta).map_err(|e| e.to_string())?;
-    // Nome barato antes de encodar: o hover chama isto a cada passada do mouse e
-    // reencodar a imagem só para descobrir que o arquivo já existe é desperdício.
-    let nome = format!("{}.{}", drag_file_stem(&entry), normalize_ext("", &entry));
-    let pronto = pasta.join(&nome);
-    if pronto.is_file() {
-        return Ok(vec![pronto.to_string_lossy().to_string()]);
-    }
-    let payload = tauri::async_runtime::spawn_blocking(move || monta_payload(&entry, Some(imagem), &id))
-        .await
-        .map_err(|e| e.to_string())??;
-    let Some(bytes) = b64_decode(&payload.data) else {
-        return Err("payload de arrasto invalido".into());
-    };
-    let alvo = pasta.join(&payload.name);
-    if !alvo.is_file() {
-        std::fs::write(&alvo, &bytes).map_err(|e| e.to_string())?;
-    }
-    Ok(vec![alvo.to_string_lossy().to_string()])
+    // Fora da thread de UI: materializar imagem do banco é encode de verdade.
+    tauri::async_runtime::spawn_blocking(move || {
+        arquivos_da_entrada(&entry, imagem, &dir, &id).map(|ps| {
+            ps.iter()
+                .map(|p| p.to_string_lossy().to_string())
+                .collect::<Vec<_>>()
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Roda numa thread de bloqueio: o hover da lista chama isto para adiantar o
@@ -314,7 +280,7 @@ async fn drag_payload(state: State<'_, AppState>, id: String) -> Result<DragPayl
     let (entry, imagem) = {
         let store = lock_store(&state.store);
         let Some(e) = store.get(&id).cloned() else {
-            return Err("entrada sumiu".into());
+            return Err("entry not found".into());
         };
         let img = if e.has_image {
             store.image_bytes(&id)
@@ -1566,21 +1532,25 @@ fn copy_entry_inner(
         g.drain(..extra);
     }
 
-    // Keep history ordered like Raycast: re-used items move to the top.
-    {
-        let mut store = lock_store(&state.store);
-        if let Some(idx) = store.entries.iter().position(|e| e.id == id) {
-            let mut e = store.entries.remove(idx);
-            e.created_at = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_millis() as i64)
-                .unwrap_or(e.created_at);
-            store.touch(&e);
-            store.entries.insert(0, e);
-        }
-    }
+    reusa_entrada(app, id);
     notify_changed(app);
     Ok(())
+}
+
+/// Entrada reusada vai para o topo (o Raycast faz o mesmo) — sem tocar no
+/// conteúdo dela: fixação, OCR e metadados continuam.
+fn reusa_entrada(app: &AppHandle, id: &str) {
+    let state = app.state::<AppState>();
+    let mut store = lock_store(&state.store);
+    if let Some(idx) = store.entries.iter().position(|e| e.id == id) {
+        let mut e = store.entries.remove(idx);
+        e.created_at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(e.created_at);
+        store.touch(&e);
+        store.entries.insert(0, e);
+    }
 }
 
 #[tauri::command]
@@ -1591,6 +1561,68 @@ fn copy_entry(
     plain_text: bool,
 ) -> Result<(), String> {
     copy_entry_inner(&app, &state, &id, plain_text)
+}
+
+/// Arquivos no disco de uma entrada, para **entregar como arquivo**
+/// (`CF_HDROP`): tanto no arrasto para fora quanto na colagem de várias.
+///
+/// Ordem: arquivos do disco → texto que é caminho de arquivo → imagem/GIF que
+/// só existe no banco cifrado (materializada uma vez em `<dados>/drag/`).
+///
+/// Entrada de vários arquivos (copiar três no Explorer cria **um** item com
+/// três caminhos) devolve os três: entregar só o primeiro arrastava/colava um
+/// pedaço do conteúdo sem avisar.
+///
+/// `Err` quando não há arquivo (texto, link, cor) e quando o caminho não serve
+/// para o Windows entregar: de rede (`\\svr\...`, bug drag-rs #72) ou que sumiu
+/// do disco (o alvo criaria "nada" e o usuário veria um gesto/colagem vazios).
+fn arquivos_da_entrada(
+    entry: &crate::store::Entry,
+    imagem: Option<Vec<u8>>,
+    dir: &std::path::Path,
+    id: &str,
+) -> Result<Vec<std::path::PathBuf>, String> {
+    if !entry.paths.is_empty() {
+        let mut prontos: Vec<std::path::PathBuf> = Vec::new();
+        for p in entry.paths.iter().map(std::path::PathBuf::from) {
+            // Caminho de rede ou que sumiu: erro, não "entrega o resto".
+            caminho_de_arrasto(&p)?;
+            prontos.push(p);
+        }
+        if !prontos.is_empty() {
+            return Ok(prontos);
+        }
+    }
+    if let Some(p) = caminho_do_texto(entry) {
+        if p.is_file() {
+            caminho_de_arrasto(&p)?;
+            return Ok(vec![p]);
+        }
+    }
+    let Some(imagem) = imagem else {
+        return Err("this entry has no file".into());
+    };
+    let pasta = dir.join("drag");
+    std::fs::create_dir_all(&pasta).map_err(|e| e.to_string())?;
+    // Nome barato antes de encodar: o hover chama isto a cada passada do mouse e
+    // reencodar a imagem só para descobrir que o arquivo já existe é desperdício.
+    let pronto = pasta.join(format!(
+        "{}.{}",
+        drag_file_stem(entry),
+        normalize_ext("", entry)
+    ));
+    if pronto.is_file() {
+        return Ok(vec![pronto]);
+    }
+    let payload = monta_payload(entry, Some(imagem), id)?;
+    let Some(bytes) = b64_decode(&payload.data) else {
+        return Err("could not prepare the file".into());
+    };
+    let alvo = pasta.join(&payload.name);
+    if !alvo.is_file() {
+        std::fs::write(&alvo, &bytes).map_err(|e| e.to_string())?;
+    }
+    Ok(vec![alvo])
 }
 
 /// Cola várias entradas em sequência (a ordem do vetor é a ordem da colagem).
@@ -1649,6 +1681,99 @@ fn paste_many(
                 std::thread::sleep(Duration::from_millis(300));
             }
         }
+        let _ = handle.emit("clipboard:multi-pasted", count);
+    });
+    Ok(count)
+}
+
+/// Cola **vários arquivos de uma vez**: uma escrita de `CF_HDROP` com todos os
+/// caminhos e **uma** colagem, em vez de N colagens em sequência como o
+/// `paste_many` faz com texto.
+///
+/// Usado quando a seleção é só arquivo/imagem (o frontend decide); seleção
+/// misturada continua pelo caminho de texto.
+#[tauri::command]
+fn paste_files(
+    app: AppHandle,
+    state: State<AppState>,
+    ids: Vec<String>,
+    keep_open: Option<bool>,
+) -> Result<usize, String> {
+    if ids.is_empty() {
+        return Err("nothing selected".into());
+    }
+    let target = state.last_foreground.load(Ordering::SeqCst);
+    let mut caminhos: Vec<String> = Vec::new();
+    for id in &ids {
+        let (entry, imagem, dir) = {
+            let store = lock_store(&state.store);
+            let Some(e) = store.get(id).cloned() else {
+                return Err("entry not found".into());
+            };
+            let img = if e.has_image {
+                store.image_bytes(id)
+            } else {
+                None
+            };
+            (e, img, store.dir.clone())
+        };
+        match arquivos_da_entrada(&entry, imagem, &dir, id) {
+            Ok(ps) => caminhos.extend(ps.iter().map(|p| p.to_string_lossy().to_string())),
+            Err(e) => {
+                // Nada de colar metade da seleção sem avisar.
+                log(&format!("paste_files: {id} sem arquivo ({e})"));
+                return Err(e);
+            }
+        }
+    }
+    let count = caminhos.len();
+    log(&format!("paste_files n={count} target_hwnd={target}"));
+
+    {
+        use clipboard_win::formats;
+        let _guard = clipboard_win::Clipboard::new_attempts(8).map_err(|e| e.to_string())?;
+        formats::FileList
+            .write_clipboard(&caminhos[..])
+            .map_err(|e| e.to_string())?;
+    }
+    // Nossa própria escrita não pode re-entrar no histórico.
+    {
+        let seq = win32::sequence_number();
+        let mut g = lock_ignores(&state.ignore_sequences);
+        g.push(seq);
+        let extra = g.len().saturating_sub(8);
+        g.drain(..extra);
+    }
+    // Vão para o topo, mantendo a ordem da seleção.
+    for id in ids.iter().rev() {
+        reusa_entrada(&app, id);
+    }
+    notify_changed(&app);
+    let _ = app.emit("clipboard:pasted", ());
+
+    let keep_open = keep_open.unwrap_or_else(|| {
+        app.state::<AppState>()
+            .settings
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .keep_open_after_paste
+    });
+    if keep_open {
+        std::thread::sleep(Duration::from_millis(45));
+    } else if let Some(win) = app.get_webview_window("main") {
+        // Mesmo caminho da colagem simples: esconde já e o foco volta sozinho.
+        set_shown(false);
+        win32::hide_now(main_hwnd(&app));
+        let handle_win = win.clone();
+        std::thread::spawn(move || {
+            let _ = handle_win.hide();
+        });
+    }
+
+    let handle = app.clone();
+    std::thread::spawn(move || {
+        let _trava = lock_paste();
+        paste_with_retry(target);
         let _ = handle.emit("clipboard:multi-pasted", count);
     });
     Ok(count)
@@ -2274,7 +2399,7 @@ fn delete_recent(_app: AppHandle, state: State<AppState>, minutes: u32) -> Mudan
         for id in &doomed {
             store.remove(id);
         }
-        return mudanca_com(doomed.len(), store.entries.len());
+        mudanca_com(doomed.len(), store.entries.len())
     }
 }
 
@@ -2285,7 +2410,7 @@ fn delete_entry(_app: AppHandle, state: State<AppState>, id: String) -> Mudanca 
         let mut store = lock_store(&state.store);
         let existia = store.entries.iter().any(|e| e.id == id);
         store.remove(&id);
-        return mudanca_com(if existia { 1 } else { 0 }, store.entries.len());
+        mudanca_com(if existia { 1 } else { 0 }, store.entries.len())
     }
 }
 
@@ -2301,7 +2426,7 @@ fn delete_entries(_app: AppHandle, state: State<AppState>, ids: Vec<String>) -> 
             store.remove(id);
         }
         let saiu = antes - store.entries.len();
-        return mudanca_com(saiu, store.entries.len());
+        mudanca_com(saiu, store.entries.len())
     }
 }
 
@@ -2319,7 +2444,7 @@ fn clear_entries(_app: AppHandle, state: State<AppState>, keep_pinned: bool) -> 
         store.entries = kept;
         store.save();
         let saiu = antes - store.entries.len();
-        return mudanca_com(saiu, store.entries.len());
+        mudanca_com(saiu, store.entries.len())
     }
 }
 
@@ -3293,6 +3418,7 @@ pub fn run() {
             copy_entry,
             paste_entry,
             paste_many,
+            paste_files,
             save_image_as,
             save_entry_as,
             save_image_to,
@@ -3637,7 +3763,7 @@ mod arrasto {
     fn caminho_de_rede_e_recusado() {
         let p = std::path::Path::new(r"\\servidor\pasta\arquivo.zip");
         let erro = caminho_de_arrasto(p).unwrap_err();
-        assert!(erro.contains("rede"), "erro inesperado: {erro}");
+        assert!(erro.contains("network"), "erro inesperado: {erro}");
     }
 
     /// Diretório não é arquivo: `CF_HDROP` de pasta sai diferente no Explorer e
@@ -3645,5 +3771,68 @@ mod arrasto {
     #[test]
     fn diretorio_e_recusado() {
         assert!(caminho_de_arrasto(&std::env::temp_dir()).is_err());
+    }
+
+    /// Entrada de texto (sem arquivo nenhum) não pode virar "arquivo": é o que
+    /// separa a colagem de N arquivos da colagem de texto.
+    #[test]
+    fn texto_sem_arquivo_nao_vira_caminho() {
+        let e = entry_vazio("text", "apenas um texto");
+        let r = arquivos_da_entrada(&e, None, &std::env::temp_dir(), "t1");
+        assert!(r.is_err(), "texto puro não tem caminho");
+    }
+
+    /// Entrada com `paths` entrega o arquivo, sem ler byte nenhum.
+    #[test]
+    fn caminho_da_entrada_vem_de_paths() {
+        let tmp = std::env::temp_dir().join("rayclip-colar-1.bin");
+        std::fs::write(&tmp, b"x").unwrap();
+        let mut e = entry_vazio("file", "arquivo");
+        e.paths = vec![tmp.to_string_lossy().to_string()];
+        let p = arquivos_da_entrada(&e, None, &std::env::temp_dir(), "t2").unwrap();
+        assert_eq!(p, vec![tmp.clone()]);
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    /// Um item do histórico pode ser **vários** arquivos (copiar três no
+    /// Explorer). Ele tem que entregar os três: antes só o primeiro saía e o
+    /// resto desaparecia sem aviso.
+    #[test]
+    fn entrada_de_varios_arquivos_entrega_todos() {
+        let a = std::env::temp_dir().join("rayclip-multi-a.txt");
+        let b = std::env::temp_dir().join("rayclip-multi-b.txt");
+        std::fs::write(&a, b"a").unwrap();
+        std::fs::write(&b, b"b").unwrap();
+        let mut e = entry_vazio("files", "2 files");
+        e.paths = vec![
+            a.to_string_lossy().to_string(),
+            b.to_string_lossy().to_string(),
+        ];
+        let ps = arquivos_da_entrada(&e, None, &std::env::temp_dir(), "t4").unwrap();
+        assert_eq!(ps, vec![a.clone(), b.clone()]);
+        let _ = std::fs::remove_file(&a);
+        let _ = std::fs::remove_file(&b);
+    }
+
+    /// Arquivo apagado do disco: erro, e não um caminho morto na colagem.
+    #[test]
+    fn caminho_apagado_e_erro() {
+        let mut e = entry_vazio("file", "fantasma");
+        e.paths = vec![std::env::temp_dir()
+            .join("rayclip-apagado-9999.bin")
+            .to_string_lossy()
+            .to_string()];
+        assert!(arquivos_da_entrada(&e, None, &std::env::temp_dir(), "t3").is_err());
+    }
+
+    /// Entry mínimo para os testes (o resto dos campos tem `default`).
+    fn entry_vazio(kind: &str, texto: &str) -> crate::store::Entry {
+        crate::store::Entry {
+            id: "teste".into(),
+            kind: kind.into(),
+            title: texto.into(),
+            text: Some(texto.into()),
+            ..Default::default()
+        }
     }
 }

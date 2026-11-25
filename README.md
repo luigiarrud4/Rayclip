@@ -513,6 +513,19 @@ copiou, então se o gerenciador não publicar o marcador o conteúdo entra no
 histórico dele. A decisão fica nossa, de propósito, e o interruptor "Also capture
 passwords & protected content" desliga o filtro quando você quiser.
 
+### Novidades da v0.1.40 — colar vários arquivos de uma vez
+
+Marcar três itens e apertar `Enter` colava um de cada vez. Se os três eram
+arquivos, o certo é **uma** lista de arquivos (`CF_HDROP`) e **uma** colagem — é
+assim que o Explorer entende "cole estes três aqui". Agora, quando a seleção é
+só de arquivos/imagens, é isso que acontece; seleção com texto continua colando
+em sequência.
+
+De quebra, um item que representa **vários** arquivos (copiar três no Explorer
+cria um item só) passou a entregar os três — antes só o primeiro saía, sem
+aviso. E o atualizador não fica mais esperando para sempre por um arquivo que
+não é programa: ele confere o cabeçalho PE antes de lançar.
+
 ### Novidades da v0.1.35 — clique seleciona de novo
 
 O v0.1.33 (busca no Rust) deixou um `useCallback` dependendo da seleção. Como
