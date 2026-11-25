@@ -10,9 +10,9 @@ dele é usado; só o resultado visual e funcional foi reproduzido.
 - Stack: **Tauri v2 (Rust) + React + TypeScript + WebView2**
 - Versão atual: **0.1.46**
 - Binário: `src-tauri/target/release/rayclip.exe` (11.132.928 B, SHA256
-  `0f1285b4f1b3da06c5d30ea1eba9425ad1bfed30c66a96622d864ce73bac7875`)
+  `8e5ec681fa2a607ca2d7bae2fe034d9161096695c80002af0c46409c71b1d3b4`)
 - Instalador: `src-tauri/target/release/bundle/nsis/Rayclip_0.1.46_x64-setup.exe`
-  (3.816.235 B)
+  (3.810.433 B)
 
 Este documento explica **o que o app faz, como é feito por dentro e como cada
 problema difícil foi resolvido** (com a medição usada para provar).

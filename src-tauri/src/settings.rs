@@ -275,9 +275,11 @@ mod testes {
         assert_eq!(cfg.bg_color, "#1a1a1a");
         assert!((cfg.bg_opacity - 0.35).abs() < f64::EPSILON);
         // cor inválida volta para "a do tema" em vez de quebrar o CSS
-        let mut ruim = Settings::default();
-        ruim.bg_color = "red; background: url(x)".into();
-        ruim.bg_opacity = 9.0;
+        let ruim = Settings {
+            bg_color: "red; background: url(x)".into(),
+            bg_opacity: 9.0,
+            ..Settings::default()
+        };
         let ruim = ruim.sanitized();
         assert_eq!(ruim.bg_color, "");
         assert!((ruim.bg_opacity - 1.0).abs() < f64::EPSILON);
