@@ -836,6 +836,167 @@ legível em disco; clique seleciona / duplo clique cola; `Backspace` na busca n�
 apaga nada.
 
 Tabela completa de mais de 30 testes com resultados: ver `README.md`.
+### 8.52 Dois defeitos que o print mostrou: hora do nome e OCR (v0.1.39)
+
+O print da janela tinha duas informações que não fechavam: a imagem estava listada
+como 21:11 e o arquivo arrastado se chamava `Rayclip image 2026-11-25 00-12-26`
+(dia seguinte, três horas no futuro); e o painel dizia "No text detected" numa
+imagem cheia de texto.
+
+#### O nome do arquivo saía em UTC
+
+`chrono_label()` fazia a conversão civil a partir do epoch **UTC** — o comentário
+do código até admitia. Numa máquina em UTC-3, capturar às 21:12 gerava nome de
+00:12 do dia seguinte. Agora usa `GetLocalTime` (horário do sistema, já com
+horário de verão resolvido): o mesmo gesto gera `Rayclip image 2026-11-24
+21-31-44.png`.
+
+#### O OCR nunca rodava, por dois motivos
+
+1. **Perfil de idiomas vazio.** O código usava só
+   `OcrEngine::TryCreateFromUserProfileLanguages()`. Nesta máquina
+   `Get-WinUserLanguageList` está vazia, a chamada devolve erro e **toda** imagem
+   virava "sem texto" — com o pacote `Language.OCR~~~pt-BR` instalado do lado.
+   Agora há plano B: se o perfil falhar, usa o primeiro idioma de
+   `AvailableRecognizerLanguages()` (preferindo `pt`).
+2. **O componente de OCR não existe neste Windows.** Mesmo com motor escolhido,
+   o WinRT responde `Class not registered` (`0x80040154`):
+   `C:\Windows\System32\Windows.Media.Ocr.dll` **não existe** (está só em
+   `WinSxS`, sem link), e a classe `Windows.Media.Ocr.OcrEngine` não está em
+   `HKLM\SOFTWARE\Microsoft\WindowsRuntime\ActivatableClassId`. Isso é estado
+   da máquina, não do app: só conserta com reparo do Windows
+   (`DISM /Online /Cleanup-Image /RestoreHealth`, ou `Add-WindowsCapability`).
+
+O que o app faz agora, com razão: `ocr::disponivel()` testa o motor uma vez e o
+comando `ocr_disponivel` deixa a interface dizer **"OCR indisponível neste
+Windows"** em vez de "Nenhum texto detectado" — que era uma mentira confortável.
+Além disso, imagem nenhuma é marcada como "já tentada" quando o motor não existe:
+se o componente for instalado depois, o índice se completa no próximo início, em
+vez de ficar vazio para sempre.
+
+Ainda não medido: OCR funcionando de verdade (precisa de Windows com o
+componente). O teste para isso é arrastar/copiar uma captura com texto e conferir
+que a linha aparece na busca pelo texto de dentro da imagem.
+
+### 8.51 DevTools sob demanda, sem flag no build (v0.1.39)
+
+Até aqui, medir qualquer coisa pela interface exigia colocar
+`"additionalBrowserArgs": "--remote-debugging-port=9222"` no `tauri.conf.json`
+e **lembrar de tirar** antes do release (era até uma regra do plano). O build de
+teste e o publicado eram arquivos diferentes por causa de uma flag.
+
+Agora a porta existe só quando alguém pede:
+
+```powershell
+$env:RAYCLIP_CDP = "1"          # ou o número da porta
+$env:RAYCLIP_CDP = "1"; src-tauri\target\debug\rayclip.exe --open
+```
+
+- `aplicar_cdp()` no `lib.rs` mexe na configuração **em memória**, antes de o
+  `run` criar as janelas; sem a variável, nada muda e o binário é o de release.
+- Sempre em loopback (`--remote-debugging-address=127.0.0.1`): não fica um canal
+  de controle da interface aberto para a rede.
+- Os argumentos passados incluem os padrões do wry
+  (`--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection`,
+  `--autoplay-policy=no-user-gesture-required`): `additional_browser_args`
+  **substitui** o padrão do wry em vez de acrescentar.
+
+O caminho “óbvio” não funciona e ficou registrado para não ser tentado de novo: a
+variável `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` é **ignorada**, porque o wry
+sempre define os argumentos por conta própria (medido: porta não abre, e o
+`--remote-debugging-port` não aparece na linha de comando do `msedgewebview2.exe`).
+
+Medido: sem a variável, `http://127.0.0.1:9222/json/list` recusa conexão; com
+`RAYCLIP_CDP=1`, responde 200 com 1 alvo, e a linha de comando do WebView2 ganha
+`--remote-debugging-address=127.0.0.1 --remote-debugging-port=9222`.
+
+Os testes acompanharam: `_ref/cdp_env.py` (`env_cdp()`) passa a variável para o
+app que eles mesmos sobem, e `_ref/reiniciar.ps1 -Cdp` faz o mesmo no teste
+manual. Nenhuma edição de configuração durante a medição.
+
+### 8.50 Arrastar arquivo grande para fora: o teto era o Chromium (v0.1.39)
+
+O relato era curto: "pegar um `.zip`/`.exe` de 25 MB e arrastar para uma pasta não
+faz nada". Até 3 MB funcionava; acima disso, nada era criado — e sem nenhum erro.
+
+#### A causa
+
+O arrasto saía pelo `DownloadURL` do Chromium, que é a receita que vira
+`CF_HDROP` no Explorer — mas ele carrega os **bytes** do conteúdo. Entre 3 e
+25 MB o Chromium simplesmente desiste. O caminho certo para arquivo que já está
+no disco é OLE (`DoDragDrop` + `CF_HDROP` apontando para o **caminho**): não copia
+bytes, não tem teto e não passa pela memória do app.
+
+Tentar isso à mão já tinha travado cinco vezes (§2 do `PLANO_VM.md`):
+`SHDoDragDrop` nunca voltava e o `QueryContinueDrag` nunca era chamado. A leitura
+mais provável, que as tentativas não mediram: `SetCapture` feito de uma thread
+que **não** é a dona da janela sob o cursor (a do WebView2) não captura nada, e
+sem captura não chega mensagem de mouse — o laço espera para sempre.
+
+#### O que resolveu
+
+Não foi reescrever OLE à mão: foi o **`tauri-plugin-drag` 2.1.1** (CrabNebula),
+que já faz exatamente esse desenho em produção (Rust + `@crabnebula/tauri-plugin-drag`
+no frontend, permissão `drag:default`).
+
+- **Entrada que é arquivo** (`paths`, ou tipo `file/files/pdf/video/audio/archive`):
+  o comando novo `drag_files` devolve o **caminho** e a linha chama `startDrag`.
+  Nenhum byte é lido: o log, que antes mostrava `drag payload: … 26214400 bytes`,
+  agora mostra só `drag: comecou`.
+- **Imagem/GIF** (que só existe no banco cifrado): materializada uma vez em
+  `%APPDATA%\com.rayclip.app\clipboard\drag\<nome>.png` e o arrasto leva o
+  caminho. Custo aceito: um arquivo a mais no disco do app.
+- **Texto/link/cor**: continuam no `DownloadURL` do Chromium (funcionam, e o
+  `text/plain` é o que faz o Notepad/Word receberem texto em vez de arquivo).
+- **Caminho de rede** (`\\servidor\...`) é recusado: o plugin derruba o app com
+  UNC (bug aberto do drag-rs #72). Melhor não arrastar do que fechar sozinho.
+
+O caminho do sistema começa no **pointermove** (limiar de 4 px, como nos
+gerenciadores de arquivo), não no `dragstart`: começar de dentro do gesto do
+Chromium é justamente a situação que travava. Por isso a linha que é arquivo sai
+com `draggable={false}` — dois arrastos ao mesmo tempo (o do navegador e o do
+sistema) travam a janela.
+
+A escolha é feita pelo **tipo da entrada**, de forma síncrona. A primeira versão
+decidia pelo caminho já ter chegado (prefetch do hover); num "pegar e arrastar"
+rápido o caminho ainda não tinha chegado e a linha caía de novo no Chromium — o
+bug voltava para quem arrasta rápido, que é o caso normal.
+
+#### Medido (build debug, Explorer à direita do app)
+
+| Entrada | Antes | Depois |
+| --- | --- | --- |
+| `.zip` 3 MB → pasta | OK | OK, 3.145.728 B, `sha256 ff5a7aa5…` |
+| `.zip` 25 MB → pasta | nada criado | OK, 26.214.400 B, `sha256 995f4dfe…` |
+| `.exe` 25 MB → pasta | nada criado | OK, 26.214.400 B, nome e extensão certos |
+| imagem do banco → pasta | OK (497 KB) | OK, PNG de 2.399 B (materializado em `drag/`) |
+| texto → Notepad | OK | OK (inalterado) |
+| arquivos escritos em `%TEMP%` | 0 | 0 (só o arquivo de staging das imagens, no disco do app) |
+| janela durante o arrasto | visível | visível (`IsWindowVisible` = true) |
+| clique depois do arrasto | seleciona | seleciona |
+| `Alt+Space` depois do arrasto | funciona | funciona |
+
+O gesto apressado (`SEM_HOVER=1` no `_ref/teste_arrasto_ole.py`, sem os 250 ms de
+hover) foi medido à parte: 3 MB e 25 MB passam igual.
+
+#### Erros do harness (de novo meus, não do app)
+
+1. Esperar a janela por 4 s: nesta máquina o WebView2 leva ~6 s para abrir — o
+teste dizia "app nao abriu" sem motivo. Agora são 30 s.
+2. Medir a lista **antes** do primeiro `search_entries` devolvia "0 linhas" e
+   parecia que o filtro não funcionava.
+3. Com o Explorer em primeiro plano, o app abria e escondia na hora (é o
+   comportamento normal: perdeu o foco). O teste tem que trazer a janela para
+   frente antes de medir, não depois.
+
+#### Limpeza que entrou junto
+
+O log de diagnóstico `hook diag: pt=(…)` do hook de clique saiu. Não era só log:
+os argumentos do `format!` chamavam `cursor_point` (2×), `class_of_hwnd`,
+`foreground_hwnd` e `window_rect` a **cada clique em qualquer janela**, e em
+release também — o `log` descarta a mensagem depois, mas os argumentos já foram
+calculados.
+
 ### 8.49 Arrastar para fora, temas quebrados e moldura nativa (v0.1.37/0.1.38)
 
 Três pedidos do usuário, cada um com uma causa diferente — e, de novo, quase
@@ -877,7 +1038,8 @@ Explorer; texto -> Notepad com o texto exato (Ctrl+A, Ctrl+C, `Get-Clipboard`);
 O travamento relatado ("não respondendo" ao clicar num `.zip`) era o payload
 sendo lido **síncrono no hover**: `fs::read` do zip inteiro + base64 na hora.
 Agora `drag_payload` é `async` e roda em `spawn_blocking`, com teto de
-**32 MB** (acima disso o arrasto é recusado e fica só uma linha no log). Medido
+**128 MB** (`MAX_ARRASTO`; acima disso o arrasto é recusado e fica só uma linha
+no log). Medido
 com um zip de 120 MB: hover e clique com `SendMessageTimeout` + `IsHungAppWindow`
 respondendo sempre.
 

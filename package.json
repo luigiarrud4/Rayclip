@@ -1,7 +1,7 @@
 {
     "name":  "rayclip",
     "private":  true,
-    "version":  "0.1.38",
+    "version":  "0.1.39",
     "type":  "module",
     "scripts":  {
                     "dev":  "vite",
@@ -10,6 +10,7 @@
                     "tauri":  "tauri"
                 },
     "dependencies":  {
+                         "@crabnebula/tauri-plugin-drag":  "^2.1.0",
                          "@tauri-apps/api":  "^2.12.5",
                          "react":  "^19.3.1",
                          "react-dom":  "^19.3.1"

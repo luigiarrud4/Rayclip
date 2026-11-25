@@ -68,6 +68,21 @@ pub fn cleanup_temp() {
     }
 }
 
+/// `true` quando este Windows tem o motor de OCR de verdade (a classe WinRT
+/// `Windows.Media.Ocr.OcrEngine` registrada).
+///
+/// Em máquina sem o componente (VM enxuta, Windows sem o pacote de mídia), o
+/// WinRT responde `Class not registered`: toda imagem vira "nenhum texto". A
+/// interface precisa saber disso para dizer a verdade em vez de fingir que a
+/// imagem não tem texto. Guardado em cache: o teste custa uma chamada COM.
+pub fn disponivel() -> bool {
+    static DISPONIVEL: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *DISPONIVEL.get_or_init(|| {
+        init_apartment();
+        motor().is_some()
+    })
+}
+
 fn init_apartment() {
     use windows::Win32::System::WinRT::{RoInitialize, RO_INIT_MULTITHREADED};
     unsafe {
@@ -75,12 +90,41 @@ fn init_apartment() {
     }
 }
 
+/// Motor de OCR.
+///
+/// `TryCreateFromUserProfileLanguages` devolve **erro** quando a lista de idiomas
+/// do usuário está vazia (`Get-WinUserLanguageList` vazia, comum em instalação
+/// enxuta) — e aí o app nunca reconhecia texto nenhum, com o pacote de OCR
+/// instalado do lado. Por isso o plano B: pegar o primeiro idioma que tem
+/// pacote de OCR (`AvailableRecognizerLanguages`), preferindo o do sistema.
+fn motor() -> Option<windows::Media::Ocr::OcrEngine> {
+    use windows::Media::Ocr::OcrEngine;
+
+    if let Ok(e) = OcrEngine::TryCreateFromUserProfileLanguages() {
+        return Some(e);
+    }
+    let langs = OcrEngine::AvailableRecognizerLanguages().ok()?;
+    let n = langs.Size().unwrap_or(0);
+    let mut escolhido = None;
+    for i in 0..n {
+        let Ok(l) = langs.GetAt(i) else { continue };
+        if escolhido.is_none() {
+            escolhido = Some(l.clone());
+        }
+        // O do sistema vem primeiro na lista; qualquer um serve, mas este é o
+        // que acerta acentos do idioma da máquina.
+        if l.LanguageTag().map(|t| t.to_string_lossy()).unwrap_or_default().starts_with("pt") {
+            escolhido = Some(l);
+            break;
+        }
+    }
+    OcrEngine::TryCreateFromLanguage(&escolhido?).ok()
+}
+
 fn recognize_bytes(png: &[u8]) -> Option<String> {
     use windows::Graphics::Imaging::BitmapDecoder;
-    use windows::Media::Ocr::OcrEngine;
     use windows::Storage::Streams::{DataWriter, InMemoryRandomAccessStream};
-
-    let engine = OcrEngine::TryCreateFromUserProfileLanguages().ok()?;
+    let engine = motor()?;
     // A imagem vive só na memória: nada de arquivo temporário em claro.
     let stream = InMemoryRandomAccessStream::new().ok()?;
     let writer = DataWriter::CreateDataWriter(&stream).ok()?;

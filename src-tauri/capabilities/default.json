@@ -13,6 +13,7 @@
     "core:event:default",
     "core:app:default",
     "core:path:default",
-    "global-shortcut:default"
+    "global-shortcut:default",
+    "drag:default"
   ]
 }

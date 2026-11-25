@@ -8,6 +8,7 @@ qualquer mudança confirma que a seleção se moveu; zero mudança confirma o bu
 import ctypes
 import os
 import subprocess
+import cdp_env
 import time
 from ctypes import wintypes as w
 
@@ -40,6 +41,7 @@ def mostrar():
     subprocess.Popen(
         [EXE],
         creationflags=0x00000008 | 0x08000000,  # DETACHED_PROCESS | CREATE_NO_WINDOW
+        env=cdp_env.env_cdp(),
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,

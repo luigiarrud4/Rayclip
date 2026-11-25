@@ -11,6 +11,16 @@ Estado no momento em que este plano foi escrito:
 
 ## 1. Objetivo desta rodada
 
+> **Feito nesta máquina (24/11):** toolchain completo instalado (VS 2022 Build
+> Tools + MSVC 14.44, Windows SDK 10.0.26100, Rust 1.100, Node 26, Python 3.12 +
+> `websocket-client`), `npm install`, build debug OK, **arrasto de arquivo
+grande resolvido** pelo §4.1 (`tauri-plugin-drag`) — medido até **120 MB** —,
+> CDP sob demanda (§8.51), nome de arquivo em hora local e OCR honesto (§8.52),
+> `cargo test --lib` **47/47**. Falta o release (item 6 do §4.0) — e `git`/`gh`
+> **não existem** nesta máquina. Pendência de sistema: esta máquina **não tem** o
+> componente de OCR do Windows (`Windows.Media.Ocr.dll` ausente do System32), então
+> o OCR do app não pode ser medido aqui.
+
 Fechar o **arrasto de arquivos grandes e de `.exe` para fora do app** e, de quebra,
 medir o que a VM permite medir (elevação, UAC, autostart, multi-monitor, teclado).
 
@@ -32,6 +42,10 @@ copia bytes, não tem teto de tamanho e não passa pela memória do app.
 ---
 
 ## 2. O que já foi tentado no OLE (não repetir do zero)
+
+> **Atualização da revisão:** antes de tentar o OLE de novo, ver §4.1 — existe
+> crate maduro que faz exatamente isso (`tauri-plugin-drag`). O histórico abaixo
+> continua valendo como lista do que **não** repetir à mão.
 
 Feito na máquina do usuário, sem sucesso:
 
@@ -70,45 +84,111 @@ travado no build do usuário); este plano descreve como retomá-lo.
 4. Descompactar `rayclip-projeto.zip`, rodar `npm install`.
 5. `npx tauri build --debug --no-bundle` (≈60 s) e confirmar que o app abre com
    `src-tauri\target\debug\rayclip.exe --open`.
-6. Para os testes automatizados: adicionar temporariamente
-   `"additionalBrowserArgs": "--remote-debugging-port=9222"` em
-   `src-tauri/tauri.conf.json` (e **remover antes de qualquer build release** —
-   `grep -c remote-debugging src-tauri/tauri.conf.json` tem que dar 0).
+6. Para os testes automatizados **não precisa mais mexer no
+   `tauri.conf.json`**: o app liga o DevTools só quando existe `RAYCLIP_CDP`
+   (`1` = porta 9222, ou o número da porta), e sempre em loopback.
+
+   ```powershell
+   $env:RAYCLIP_CDP = "1"; src-tauri\target\debug\rayclip.exe --open
+   ```
+
+   Os scripts de `_ref/` já passam a variável (`import cdp_env`) e o
+   `_ref/reiniciar.ps1 -Cdp` faz o mesmo para teste manual. O release sai do
+   **mesmo** binário, sem porta aberta — `grep -c remote-debugging
+   src-tauri/tauri.conf.json` responde 0. Detalhe que custou uma medição: a
+   variável de ambiente do WebView2 (`WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS`)
+   **não** funciona aqui, porque o wry sempre define esses argumentos sozinho;
+   o jeito é alterar a config em memória (`aplicar_cdp` no `lib.rs`).
 
 ---
 
 ## 4. Ordem de trabalho na VM
 
-### 4.1 Isolar o travamento do OLE (primeiro, é o que destrava o resto)
+### 4.0 Pendências pequenas da rodada anterior (do relato do agente)
 
-1. Reintroduzir `dragout.rs` (cópia do histórico do git ou reescrever a partir da
-   seção 2) e o comando `drag_files`.
-2. **Instrumentar cada etapa** com log antes/depois: `OleInitialize`,
-   `CreateWindowExW`, `ShowWindow`, `SHParseDisplayName`, `SHCreateDataObject`,
-   `SHDoDragDrop`. O log que faltou é o que aponta a etapa travada.
-3. Rodar um arrasto para o **Notepad** (uma janela que aceita soltura de arquivo)
-   em vez do Explorer: elimina variável do Explorer.
-4. Rodar dois cenários com o cursor **começando longe da janela do app**
-   (arrastar a partir de uma linha, mas com a janela já escondida/em outra posição)
-   para testar a hipótese "`DragEnter` na própria janela do WebView2".
-5. Se for o `DragEnter` da própria janela: avaliar, em ordem,
-   - `DoDragDrop` chamado com o cursor fora da nossa janela (mover o cursor
-     programaticamente para a borda antes de iniciar e devolver depois — feio, mas
-     serve para **provar** a hipótese);
-   - iniciar o arrasto OLE a partir de `dragend` (depois do gesto do Chromium
-     terminar) — sozinho não resolveu porque `preventDefault()` no `dragstart`
-     **não dispara `dragend`**; testar `setTimeout(…, 0)`/`requestAnimationFrame`
-     em vez de `dragend`;
-   - `SHDoDragDrop` com `IDropTarget` desligado no `WebView2` (testar se a
-     implementação do WebView2 é quem trava: `WebView2` tem `AllowExternalDrop`).
-6. Critério de aceite: arrastar o `.exe` de 25 MB para uma pasta do Explorer cria o
-   arquivo com o **nome e a extensão certos**, em menos de 1 s, sem congelar a
-   janela e sem copiar os bytes para o app (`%TEMP%` sem arquivo a mais).
+| # | Pendência | Estado |
+| --- | --- | --- |
+| 1 | `monta_payload` (~l. 235-351) manda arquivo de disco por bytes/base64 até o `DownloadURL` | **feito**: `drag_files` + `tauri-plugin-drag` (§4.1). O log não mostra mais `drag payload` para arquivo |
+| 2 | `MAX_ARRASTO` descer para o teto real medido do `DownloadURL` + aviso visível | **não é mais necessário**: o teto do `DownloadURL` deixou de valer para arquivo. `MAX_ARRASTO` (128 MB) só limita o caminho de texto/imagem que ainda usa o Chromium |
+| 3 | Entrada de texto que **é** caminho de arquivo não anuncia `text/plain` (`EntryList.tsx` ~l. 179, `monta_payload` ~l. 300) | **decidido: fica como está** — só o arquivo viaja. Nada de `text/plain` com o caminho, para não trocar anexo por texto no Discord/Word |
+| 4 | Log de diagnóstico `hook diag: pt=(…)` (`lib.rs` ~l. 2666) | **feito**: removido. Os argumentos do `format!` chamavam `cursor_point`, `class_of_hwnd`, `foreground_hwnd` e `window_rect` a **cada clique de qualquer janela**, e rodavam também em release, onde `log` descarta a mensagem |
+| 5 | `DOCUMENTACAO.md` §8.50 | **feito**: §8.50 com a causa (teto do `DownloadURL`), o que resolveu, a tabela medida e os erros do harness |
+| 6 | Release 0.1.39 (bump, build, `/S`, `reiniciar.ps1`, limpar entradas de teste, commit/push/`gh release`) | pendente: ver §4.4 |
 
-Se o OLE não fechar em ~2 h de VM, plano B documentado: manter o `DownloadURL`
-para tudo até 8 MB e, acima disso, mostrar um aviso curto ("arquivo grande demais
-para arrastar — use *Save as…*") em vez de não fazer nada em silêncio. Medir o teto
-real do `DownloadURL` (8 MB, 12 MB, 16 MB) antes de escolher o número.
+Correções de harness já commitadas pelo agente anterior (não desfazer): Explorer
+vinha minimizado em `(-32000,-32000)`; Explorer ficava debaixo da janela do app e
+o arrasto soltava sobre o Rayclip; `SetWindowPos` tinha que ser refeito depois de
+medir a posição.
+
+### 4.1 Destravar o arrasto: adotar `tauri-plugin-drag` — **FEITO**
+
+Resultado medido (build debug, Explorer à direita do app): `.zip` 3 MB,
+`.zip` 25 MB, `.exe` 25 MB e imagem do banco → pasta criam o arquivo com nome,
+extensão e bytes certos; texto → Notepad continua igual; janela não esconde
+durante o gesto; clique e `Alt+Space` funcionam depois. Gesto apressado (sem os
+250 ms de hover) também passa. Testes: `_ref/teste_arrasto_ole.py`
+(`ALVO_TXT`, `ALVO_NOME`, `ALVO_BYTES`, `SEM_HOVER=1`), `_ref/teste_notepad.py`,
+`_ref/teste_pos_arrasto.py`. O texto abaixo fica como registro do plano.
+
+O §2 descreve cinco tentativas de OLE à mão, todas travadas. Antes da sexta, o
+caminho pronto: o **`tauri-plugin-drag` 2.1.1** (CrabNebula, ~90 mil downloads no
+último ciclo, atualizado em maio/2026) faz exatamente o desenho que este plano
+tenta reproduzir — `DoDragDrop` + `CF_HDROP` apontando para o **caminho**, sem
+copiar bytes e sem teto de tamanho — e já roda em outros apps Tauri 2.
+
+- Papel do Rust (`tauri-plugin-drag`) + NPM (`@crabnebula/tauri-plugin-drag`).
+- API: `startDrag({ item: ["C:\\...\\arq.zip"], icon }, cb)` — `item` são
+  **caminhos que já existem no disco**.
+- Permissão em `src-tauri/capabilities/default.json`: `"drag:default"`.
+- Registro em `lib.rs`: `.plugin(tauri_plugin_drag::init())`.
+
+Passos:
+
+1. `cargo add tauri-plugin-drag`, `npm add @crabnebula/tauri-plugin-drag`,
+   registrar o plugin e a permissão. Build debug e confirmar que o app sobe
+   **antes** de mexer em qualquer arrasto (muda o `Cargo.lock`).
+2. No frontend, trocar o caminho `DownloadURL` por `startDrag` **quando a entrada
+   tem caminho em disco** (`entry.paths[0]` de arquivo existente). Sem arquivo, o
+   `startDrag` não tem o que arrastar.
+3. Imagens/GIF (que não estão no disco): escrever em
+   `%LOCALAPPDATA%\com.rayclip.app\drag\<id>.<ext>`, uma vez, com cache por id, e
+   arrastar **esse caminho**. Custo: um arquivo a mais no disco do app — aceitar e
+   documentar; é o preço de não ter teto de tamanho.
+4. Medir: `.zip` de 3/25/120 MB e `.exe` de 25 MB para uma pasta do Explorer,
+   cronometrando até o arquivo aparecer e comparando o `sha256`; conferir que
+   `%TEMP%` não ganhou arquivo e que a janela não congela
+   (`SendMessageTimeout` + `IsHungAppWindow`, como no §8.49).
+5. Regressões: texto → Notepad/Word precisa continuar funcionando. Se o
+   `startDrag` só aceitar arquivo, manter os dois caminhos — `DownloadURL` para
+   texto puro (`text/plain`/`text/uri-list`) e `startDrag` quando houver arquivo.
+6. Armadilhas conhecidas do plugin, para não perder tempo:
+   - **caminho UNC/rede derruba o app** (bug aberto, drag-rs #72): passar só
+     caminho local; se `paths[0]` começar com `\\`, cair no `DownloadURL` ou
+     avisar;
+   - `icon` vazio (`""`) é aceito, mas o arrasto fica "vazio" no Explorer — vale
+     mandar a miniatura quando existir;
+   - o comando é assíncrono por IPC: o gesto tem que continuar com o botão
+     apertado. Se o arrasto não nascer, chamar no `mousedown`/limiar de 4 px em
+     vez do `dragstart`.
+
+**Plano B se o plugin também travar (não perder mais que ~1 h):** o §2 continua
+valendo para uma sexta tentativa manual de OLE, com o que faltou instrumentar da
+primeira vez — `GetCapture()` e `GetAsyncKeyState(VK_LBUTTON)` **antes** do
+`SHDoDragDrop`, e o id da thread dona da captura. A hipótese que o §2 não testou
+é a mais provável: `SetCapture` chamado de uma thread que **não** é a dona da
+janela sob o cursor (a do WebView2) não captura nada, e sem captura não chega
+mensagem de mouse — daí **nenhum** `QueryContinueDrag`, que é exatamente o
+sintoma medido. Se for isso, o OLE tem que nascer na thread do WebView2, e a
+pergunta vira "como pedir isso ao Chromium", não "como implementar o
+`IDropSource`".
+
+**Plano C (último recurso):** manter `DownloadURL` até um teto medido
+(8/12/16 MB) e mostrar um aviso curto ("arquivo grande demais para arrastar — use
+*Save as…*") em vez de não fazer nada em silêncio.
+
+**Critério de aceite (igual ao do plano):** arrastar o `.exe` de 25 MB para uma
+pasta do Explorer cria o arquivo com o **nome e a extensão certos**, em menos de
+1 s, sem congelar a janela e sem copiar os bytes para o `%TEMP%`.
 
 ### 4.2 Retomar o resto do arrasto (o que falta medir/fechar)
 
@@ -133,7 +213,7 @@ real do `DownloadURL` (8 MB, 12 MB, 16 MB) antes de escolher o número.
 
 ### 4.4 Fechar e publicar
 
-1. `cargo test --lib` (43/43 ou mais, com testes novos do arrasto OLE).
+1. `cargo test --lib` (43/43 ou mais, com testes novos do caminho do arrasto).
 2. `_ref/bump_version.ps1 -V 0.1.39`.
 3. `npx tauri build` → instalar `/S` → `_ref/reiniciar.ps1` (que agora já mata o
    `msedgewebview2` órfão do user-data-dir).
@@ -155,7 +235,8 @@ real do `DownloadURL` (8 MB, 12 MB, 16 MB) antes de escolher o número.
   (`_ref/keysafe.py`).
 - Nunca `Stop-Process` no meio de um arrasto OLE sem um watchdog que solte
   `ARRASTANDO`.
-- Release nunca sai com a flag de CDP.
+- Release sai sem porta de depuração: o CDP só existe com `RAYCLIP_CDP`, nunca
+  fixo no `tauri.conf.json`.
 - Nenhuma otimização entra sem ganho medido no mesmo build.
 
 ---

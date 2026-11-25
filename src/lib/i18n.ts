@@ -180,6 +180,7 @@ const PT: Record<string, string> = {
   Where: "Onde",
   "Text in Image": "Texto na imagem",
   "No text detected": "Nenhum texto detectado",
+  "OCR unavailable on this Windows": "OCR indisponível neste Windows",
   "Space or Esc to close": "Espaço ou Esc para fechar",
 
   // --------------------------------------------------------------- salvar N

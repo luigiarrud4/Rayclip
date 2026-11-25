@@ -1,15 +1,23 @@
 # Fecha e reabre o Rayclip — rodar depois de TODO update (build/correção).
-# Uso: powershell -NoProfile -File _ref/reiniciar.ps1 [-Release] [-Hidden]
+# Uso: powershell -NoProfile -File _ref/reiniciar.ps1 [-Release] [-Hidden] [-Cdp]
 #
 # Por padrão abre com `--open` (janela na tela), que é o que os testes em _ref/
 # precisam. `-Hidden` sobe só na bandeja, que é como o app nasce quando o
 # Windows o inicia sozinho.
-param([switch]$Release, [switch]$Hidden)
+#
+# `-Cdp` liga o DevTools (127.0.0.1:9222) **só nesta execução**: o app lê
+# `RAYCLIP_CDP` na abertura e o `tauri.conf.json` não carrega mais
+# `additionalBrowserArgs`, então nada de porta de depuração vaza no release.
+param([switch]$Release, [switch]$Hidden, [switch]$Cdp)
+
+# Raiz do projeto = pasta acima de `_ref`, para funcionar em qualquer máquina
+# (antes o caminho do dono, `C:\Users\Lugia\Projects\rayclip`, estava fixo).
+$raiz = Split-Path -Parent $PSScriptRoot
 
 $exe = if ($Release) {
-    "C:\Users\Lugia\Projects\rayclip\src-tauri\target\release\rayclip.exe"
+    "$raiz\src-tauri\target\release\rayclip.exe"
 } else {
-    "C:\Users\Lugia\Projects\rayclip\src-tauri\target\debug\rayclip.exe"
+    "$raiz\src-tauri\target\debug\rayclip.exe"
 }
 
 Get-Process rayclip -ErrorAction SilentlyContinue | Stop-Process -Force
@@ -35,6 +43,8 @@ if (-not (Test-Path $exe)) {
 }
 
 Remove-Item "$env:TEMP\rayclip.log" -ErrorAction SilentlyContinue
+# O filho herda o ambiente daqui; sem a variável o app abre sem porta de depuração.
+if ($Cdp) { $env:RAYCLIP_CDP = "1" } else { Remove-Item Env:\RAYCLIP_CDP -ErrorAction SilentlyContinue }
 if ($Hidden) {
     Start-Process -FilePath $exe
 } else {
@@ -44,7 +54,8 @@ Start-Sleep -Seconds 3
 
 $p = Get-Process rayclip -ErrorAction SilentlyContinue | Select-Object -First 1
 if ($p) {
-    Write-Output ("reiniciado: pid {0} - janela '{1}' - log em $env:TEMP\rayclip.log" -f $p.Id, $p.MainWindowTitle)
+    $extra = if ($Cdp) { " - CDP em 127.0.0.1:9222" } else { "" }
+    Write-Output ("reiniciado: pid {0} - janela '{1}' - log em $env:TEMP\rayclip.log{2}" -f $p.Id, $p.MainWindowTitle, $extra)
 } else {
     Write-Output "falhou: o processo nao subiu"
     exit 1

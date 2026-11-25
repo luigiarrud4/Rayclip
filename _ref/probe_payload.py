@@ -55,11 +55,12 @@ class CDP:
 
 
 def main():
+    import cdp_env
     import subprocess
 
     subprocess.run(["taskkill", "/IM", "rayclip.exe", "/F"], capture_output=True)
     time.sleep(0.8)
-    subprocess.Popen([EXE, "--open"], creationflags=0x08000008,
+    subprocess.Popen([EXE, "--open"], creationflags=0x08000008, env=cdp_env.env_cdp(),
                      stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     hwnd = None
     for _ in range(200):

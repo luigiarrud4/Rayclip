@@ -30,3 +30,6 @@ _ref/*_resultado.txt
 _ref/gif*_resultado.txt
 # capturas de tela do usuário (não publicar)
 _ref/capturas/
+
+# capturas enviadas pelo usuário
+_ref/_img/

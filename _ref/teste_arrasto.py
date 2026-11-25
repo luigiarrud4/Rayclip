@@ -15,6 +15,7 @@ import io
 import json
 import os
 import subprocess
+import cdp_env
 import time
 import urllib.request
 from ctypes import wintypes as w
@@ -25,7 +26,18 @@ import websocket
 
 IDX = int(os.environ.get("RAYCLIP_ROW", "2"))
 TRECHO = os.environ.get("RAYCLIP_ROW_TXT", "")
-EXE = r"C:\Users\Lugia\Projects\rayclip\src-tauri\target\debug\rayclip.exe"
+# Relativo ao próprio script (`_ref/`), para rodar em qualquer máquina: antes era
+# o caminho fixo do dono, `C:\Users\Lugia\Projects\rayclip`.
+EXE = os.path.abspath(
+    os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        "..",
+        "src-tauri",
+        "target",
+        "debug",
+        "rayclip.exe",
+    )
+)
 PASTA = os.path.join(os.environ["TEMP"], "alvo_arrasto")
 SAIDA = os.path.join(os.environ["TEMP"], "teste_arrasto.txt")
 
@@ -138,6 +150,7 @@ def main():
     subprocess.Popen(
         [EXE, "--open"],
         creationflags=0x08000008,
+        env=cdp_env.env_cdp(),
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,

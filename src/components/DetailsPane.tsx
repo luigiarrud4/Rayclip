@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { Entry } from "../lib/types";
-import { entryText } from "../api";
+import { entryText, ocrDisponivel } from "../api";
 import { displayTitle, fileUrl, formatBytes, mediaUrl, shortPath } from "../lib/format";
 import { FileIcon, FolderIcon } from "../lib/icons";
 import type { T } from "../lib/i18n";
@@ -70,6 +70,18 @@ export function DetailsPane({
   // Capa do link: se o arquivo sumiu (cache limpo, banco restaurado), a imagem
   // quebra e a prévia fica vazia — aí entra o bloco com o ícone do site.
   const [coverOk, setCoverOk] = useState(true);
+  // "Nenhum texto" só é verdade quando o Windows tem OCR de verdade; numa
+  // máquina sem o componente (VM enxuta) tudo cai como "sem texto".
+  const [temOcr, setTemOcr] = useState(true);
+  useEffect(() => {
+    let vivo = true;
+    void ocrDisponivel().then((ok) => {
+      if (vivo) setTemOcr(ok);
+    });
+    return () => {
+      vivo = false;
+    };
+  }, []);
   const cover = entry?.link?.imagePath
     ? entry.link.imagePath.startsWith("data:") || entry.link.imagePath.startsWith("http")
       ? entry.link.imagePath
@@ -344,7 +356,9 @@ export function DetailsPane({
           {entry.ocrText ? (
             <pre className="ocr-text">{entry.ocrText}</pre>
           ) : (
-            <div className="ocr-empty">{t("No text detected")}</div>
+            <div className="ocr-empty">
+              {temOcr ? t("No text detected") : t("OCR unavailable on this Windows")}
+            </div>
           )}
         </section>
       )}

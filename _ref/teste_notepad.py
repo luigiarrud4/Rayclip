@@ -10,13 +10,16 @@ import io
 import json
 import os
 import subprocess
+import cdp_env
 import time
 from ctypes import wintypes as w
 
 import entrada
 import harness_compare as h
 
-EXE = r"C:\Users\Lugia\Projects\rayclip\src-tauri\target\debug\rayclip.exe"
+EXE = os.path.abspath(
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src-tauri", "target", "debug", "rayclip.exe")
+)
 ARQ = os.path.join(os.environ["TEMP"], "rayclip_alvo.txt")
 SAIDA = os.path.join(os.environ["TEMP"], "teste_notepad.txt")
 MARCA = "TESTE ARRASTO TEXTO 987654"
@@ -122,17 +125,20 @@ def main():
     subprocess.Popen(
         [EXE, "--open"],
         creationflags=0x08000008,
+        env=cdp_env.env_cdp(),
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
     hwnd = None
-    for _ in range(200):
+    # Até 30 s: a janela só aparece depois de o WebView2 subir (~6 s nesta
+    # máquina). Com 4 s o teste falhava dizendo "app nao abriu" sem motivo.
+    for _ in range(600):
         achada = h.find_window("rayclip.exe")
         if achada:
             hwnd = achada
             break
-        time.sleep(0.02)
+        time.sleep(0.05)
     if not hwnd:
         diz("app nao abriu")
         return
@@ -142,6 +148,12 @@ def main():
     keysafe.focar(hwnd, espera=0.05)
 
     c = CDP()
+    # A lista só existe depois do primeiro `search_entries`; filtrar antes disso
+    # deixa a tela vazia e o teste diz "a busca nao trouxe linha" sem motivo.
+    for _ in range(40):
+        if c.ev("document.querySelectorAll('.row').length"):
+            break
+        time.sleep(0.25)
     c.ev(
         "(() => { const i = document.querySelector('.search input');"
         " if (!i) return 'sem campo';"

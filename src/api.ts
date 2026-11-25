@@ -45,6 +45,13 @@ export const linkEntry = (id: string) => invoke<boolean>("link_entry", { id });
 export const thumbEntry = (id: string) => invoke<void>("thumb_entry", { id });
 export const ocrEntry = (id: string) => invoke<void>("ocr_entry", { id });
 export const copyOcrText = (id: string) => invoke<void>("copy_ocr_text", { id });
+
+/// Windows sem o componente de OCR: a interface não pode dizer "nenhum texto".
+let _ocrDisponivel: Promise<boolean> | null = null;
+export const ocrDisponivel = () => {
+  if (!_ocrDisponivel) _ocrDisponivel = invoke<boolean>("ocr_disponivel").catch(() => true);
+  return _ocrDisponivel;
+};
 export const hideWindow = () => invoke<void>("hide_window");
 export const revealPath = (path: string) => invoke<void>("reveal_path", { path });
 export const openUrl = (url: string) => invoke<void>("open_url", { url });
@@ -107,3 +114,11 @@ export const dragPayload = (id: string) =>
 /** Marca o começo/fim do arrasto para a janela não esconder no meio. */
 export const dragStart = () => invoke<void>("drag_start");
 export const dragEnd = () => invoke<void>("drag_end");
+/**
+ * Caminhos no disco para o arrasto do **sistema** (`CF_HDROP` via OLE).
+ *
+ * O `DownloadURL` do Chromium leva os bytes e para de funcionar entre 3 e
+ * 25 MB; o OLE leva o caminho. `Err` quando a entrada não é arquivo (texto,
+ * link) — nesse caso a linha continua arrastando pelo Chromium.
+ */
+export const dragFiles = (id: string) => invoke<string[]>("drag_files", { id });

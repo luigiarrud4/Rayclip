@@ -1,6 +1,6 @@
 [package]
 name = "rayclip"
-version = "0.1.38"
+version = "0.1.39"
 description = "Clipboard History - recriacao do Raycast Clipboard"
 edition = "2021"
 rust-version = "1.77"
@@ -26,6 +26,7 @@ clipboard-win = "5"
 ureq = { version = "2", default-features = false, features = ["tls", "gzip"] }
 base64 = "0.22"
 sha2 = "0.10"
+tauri-plugin-drag = "2.1.1"
 [dependencies.windows]
 version = "0.62"
 features = [
@@ -35,6 +36,8 @@ features = [
   "Storage",
   "Storage_Streams",
   "Win32_System_WinRT",
+  "Win32_System_SystemInformation",
+  "Globalization",
   "Win32_Foundation",
   "Win32_Graphics_Gdi",
   "Win32_UI_Shell",

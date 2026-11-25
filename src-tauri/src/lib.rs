@@ -210,6 +210,103 @@ const MAX_ARRASTO_TEXTO: usize = 200_000;
 
 /// Conteúdo + nome para arrastar a entrada para uma pasta/outro app.
 ///
+/// base64 padrão. A crate 0.22 não expõe mais `base64::encode`/`decode` no topo.
+fn b64_encode(bytes: &[u8]) -> String {
+    use base64::Engine as _;
+    base64::engine::general_purpose::STANDARD.encode(bytes)
+}
+
+fn b64_decode(texto: &str) -> Option<Vec<u8>> {
+    use base64::Engine as _;
+    base64::engine::general_purpose::STANDARD.decode(texto).ok()
+}
+
+/// Caminho que o arrasto do **sistema** pode entregar: local (`C:\...`) e que
+/// ainda existe no disco.
+///
+/// Caminho de rede (`\\servidor\...`) derruba o plugin de arrasto (bug aberto do
+/// drag-rs #72): recusar é melhor do que levar o app junto.
+fn caminho_de_arrasto(p: &std::path::Path) -> Result<String, String> {
+    let s = p.to_string_lossy().to_string();
+    if s.starts_with("\\\\") {
+        return Err("caminho de rede: arrasto pelo Chromium".into());
+    }
+    if !p.is_file() {
+        return Err("arquivo sumiu do disco".into());
+    }
+    Ok(s)
+}
+
+/// Caminhos locais que o arrasto do **sistema** entrega (`CF_HDROP`, via OLE).
+///
+/// O `DownloadURL` do Chromium leva os **bytes** e por isso tem teto (medido:
+/// o `.zip` de 3 MB vira arquivo, o de 25 MB não vira nada); o OLE leva o
+/// **caminho** — não copia nada e não tem limite de tamanho. Arquivo que já está
+/// no disco sai com o caminho original; imagem que só existe no banco cifrado é
+/// materializada uma vez em `<dados>/drag/<id>.<ext>`.
+///
+/// `Err` quando não há arquivo (texto, link): aí o frontend continua com o
+/// caminho do Chromium, que funciona bem para texto.
+#[tauri::command]
+async fn drag_files(state: State<'_, AppState>, id: String) -> Result<Vec<String>, String> {
+    let (entry, imagem, dir) = {
+        let store = lock_store(&state.store);
+        let Some(e) = store.get(&id).cloned() else {
+            return Err("entrada sumiu".into());
+        };
+        let img = if e.has_image {
+            store.image_bytes(&id)
+        } else {
+            None
+        };
+        (e, img, store.dir.clone())
+    };
+
+    // Caminho utilizável pelo plugin de arrasto: local e existente.
+    fn caminho_util(p: std::path::PathBuf) -> Result<String, String> {
+        caminho_de_arrasto(&p)
+    }
+
+    // 1) Arquivo do disco: entrega o caminho, sem ler um byte sequer.
+    if let Some(p) = entry.paths.first().map(std::path::PathBuf::from) {
+        if p.is_file() {
+            return caminho_util(p).map(|c| vec![c]);
+        }
+    }
+
+    // 2) Texto que **é** um caminho de arquivo: o arquivo, não o texto.
+    if let Some(p) = caminho_do_texto(&entry) {
+        if p.is_file() {
+            return caminho_util(p).map(|c| vec![c]);
+        }
+    }
+
+    // 3) Imagem/GIF guardado no banco: materializa no disco uma vez.
+    let Some(imagem) = imagem else {
+        return Err("sem arquivo para arrastar".into());
+    };
+    let pasta = dir.join("drag");
+    std::fs::create_dir_all(&pasta).map_err(|e| e.to_string())?;
+    // Nome barato antes de encodar: o hover chama isto a cada passada do mouse e
+    // reencodar a imagem só para descobrir que o arquivo já existe é desperdício.
+    let nome = format!("{}.{}", drag_file_stem(&entry), normalize_ext("", &entry));
+    let pronto = pasta.join(&nome);
+    if pronto.is_file() {
+        return Ok(vec![pronto.to_string_lossy().to_string()]);
+    }
+    let payload = tauri::async_runtime::spawn_blocking(move || monta_payload(&entry, Some(imagem), &id))
+        .await
+        .map_err(|e| e.to_string())??;
+    let Some(bytes) = b64_decode(&payload.data) else {
+        return Err("payload de arrasto invalido".into());
+    };
+    let alvo = pasta.join(&payload.name);
+    if !alvo.is_file() {
+        std::fs::write(&alvo, &bytes).map_err(|e| e.to_string())?;
+    }
+    Ok(vec![alvo.to_string_lossy().to_string()])
+}
+
 /// Roda numa thread de bloqueio: o hover da lista chama isto para adiantar o
 /// payload, e ler um `.zip` grande no meio do laço de eventos congelava a janela.
 #[tauri::command]
@@ -341,7 +438,7 @@ fn monta_payload(
     crate::log(&format!("drag payload: {stem}.{ext} {mime} {} bytes", bytes.len()));
     Ok(DragPayload {
         name: format!("{stem}.{ext}"),
-        data: base64::encode(&bytes),
+        data: b64_encode(&bytes),
         mime,
         text: texto,
         link,
@@ -852,6 +949,13 @@ fn run_ocr_for(app: AppHandle, id: String) {
 
 /// Indexa uma imagem (quem chama já segura uma vaga do pool).
 fn ocr_one(app: &AppHandle, id: &str) -> bool {
+    // Windows sem o componente de OCR: não marca nada como "já tentado" (a
+    // imagem continua pendente e volta a ser indexada se o componente for
+    // instalado). Antes isto virava `Some("")` e a imagem ficava "sem texto"
+    // para sempre.
+    if !ocr::disponivel() {
+        return false;
+    }
     let bytes = {
         let state = app.state::<AppState>();
         let store = lock_store(&state.store);
@@ -1196,6 +1300,10 @@ fn link_entry(app: AppHandle, state: State<AppState>, id: String) -> bool {
 
 #[tauri::command]
 fn ocr_pending(app: AppHandle, state: State<AppState>) -> usize {
+    if !ocr::disponivel() {
+        log("ocr_pending: motor de OCR indisponivel neste Windows");
+        return 0;
+    }
     let ids: Vec<String> = {
         let store = lock_store(&state.store);
         store
@@ -1216,6 +1324,13 @@ fn ocr_pending(app: AppHandle, state: State<AppState>) -> usize {
 #[tauri::command]
 fn ocr_entry(app: AppHandle, id: String) {
     run_ocr_for(app, id);
+}
+
+/// A interface só pode dizer "nenhum texto" quando o Windows **tem** OCR.
+/// Sem o componente, a resposta honesta é que o recurso não existe aqui.
+#[tauri::command]
+fn ocr_disponivel() -> bool {
+    ocr::disponivel()
 }
 
 #[tauri::command]
@@ -1962,26 +2077,19 @@ fn save_many_to(
 }
 
 fn chrono_label() -> String {
-    // "2026-11-19 21-14-08" sem dependências de data
-    let secs = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    // conversão civil (UTC) — suficiente para nome de arquivo único
-    let days = secs / 86_400;
-    let rem = secs % 86_400;
-    let (h, m, s) = (rem / 3600, (rem % 3600) / 60, rem % 60);
-    let mut z = days as i64 + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z.rem_euclid(146_097);
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let y = yoe + era * 400;
-    z = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * z + 2) / 153;
-    let d = z - (153 * mp + 2) / 5 + 1;
-    let mo = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = if mo <= 2 { y + 1 } else { y };
-    format!("{y:04}-{mo:02}-{d:02} {h:02}-{m:02}-{s:02}")
+    // "2026-11-19 21-14-08" no fuso **local** do sistema.
+    //
+    // Antes isto convertia de UTC e o nome do arquivo saía adiantado pelo fuso:
+    // numa máquina em UTC-3, uma imagem capturada às 21:12 virava
+    // `Rayclip image 2026-11-25 00-12-26.png` — dia seguinte e três horas no
+    // futuro em relação ao que a lista mostra. `GetLocalTime` já resolve horário
+    // de verão, coisa que somar um `Bias` fixo não faz.
+    use windows::Win32::System::SystemInformation::GetLocalTime;
+    let t = unsafe { GetLocalTime() };
+    format!(
+        "{:04}-{:02}-{:02} {:02}-{:02}-{:02}",
+        t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond
+    )
 }
 
 #[tauri::command]
@@ -2662,15 +2770,10 @@ fn click_outside(app: &AppHandle, target: isize) {
         return; // clicou na nossa janela
     }
     let target_pid = win32::pid_of_hwnd(target);
-    log(&format!(
-        "hook diag: pt=({},{}) target=0x{target:x} {} pid={target_pid} root=0x{root:x} pid_root={} ours=0x{ours:x} fg=0x{:x} rect={:?}",
-        win32::cursor_point().0,
-        win32::cursor_point().1,
-        win32::class_of_hwnd(target),
-        win32::pid_of_hwnd(root),
-        win32::foreground_hwnd(),
-        win32::window_rect(ours)
-    ));
+    // (o diagnóstico `hook diag: pt=(…)` da investigação do clique saiu: os
+    // argumentos do `format!` chamavam `cursor_point`, `class_of_hwnd`,
+    // `foreground_hwnd` e `window_rect` a cada clique **de qualquer janela**,
+    // mesmo em release, onde `log` descarta a mensagem.)
     if target_pid == std::process::id() || win32::pid_of_hwnd(root) == std::process::id() {
         return; // menu / diálogo nativo nosso
     }
@@ -2890,7 +2993,59 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
+/// Porta de depuração pedida por `RAYCLIP_CDP`, se houver.
+///
+/// Valores aceitos: `1` (porta 9222) ou o número da porta. Sem a variável,
+/// nenhuma porta é aberta — é isso que permite o build de teste e o de release
+/// serem o mesmo arquivo.
+fn cdp_pedida() -> Option<u16> {
+    let pedido = std::env::var("RAYCLIP_CDP").ok()?.trim().to_string();
+    match pedido.as_str() {
+        "" | "0" => None,
+        "1" => Some(9222),
+        outro => match outro.parse::<u16>() {
+            Ok(p) if p > 1024 => Some(p),
+            _ => {
+                log(&format!("cdp: valor ignorado ({outro}); use 1 ou uma porta"));
+                None
+            }
+        },
+    }
+}
+
+/// Liga o DevTools **só nesta execução**, quando `RAYCLIP_CDP` existe.
+///
+/// Mexe na configuração **em memória**, antes de o `run` criar as janelas: o
+/// `tauri.conf.json` fica sem `additionalBrowserArgs`, então o release não abre
+/// porta nenhuma e não existe mais a obrigação de tirar/colocar a flag a cada
+/// medição (a regra antiga do plano).
+///
+/// A variável de ambiente do WebView2 (`WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS`)
+/// **não** serve aqui: o wry sempre define os argumentos por conta própria e,
+/// nesse caso, o WebView2 ignora a variável (medido: porta não abre).
+///
+/// Os argumentos logo abaixo são os mesmos que o wry usaria por padrão; passar
+/// `additional_browser_args` **substitui** esse padrão, não acrescenta.
+fn aplicar_cdp(contexto: &mut tauri::Context) {
+    let Some(porta) = cdp_pedida() else {
+        return;
+    };
+    let args = format!(
+        "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection \
+         --autoplay-policy=no-user-gesture-required \
+         --remote-debugging-address=127.0.0.1 --remote-debugging-port={porta}"
+    );
+    for janela in contexto.config_mut().app.windows.iter_mut() {
+        janela.additional_browser_args = Some(args.clone());
+    }
+    log(&format!("cdp: ligado em 127.0.0.1:{porta} (RAYCLIP_CDP)"));
+}
+
 pub fn run() {
+    // Depuração por CDP sob demanda (ver `aplicar_cdp`).
+    let mut contexto = tauri::generate_context!();
+    aplicar_cdp(&mut contexto);
+
     // Atualização: o exe novo sobe com `--after-update <pid>` e **espera** o
     // antigo sair antes de qualquer outra coisa (dois processos com o SQLite
     // aberto ao mesmo tempo é o que estraga o histórico). Sem o argumento, é
@@ -2926,6 +3081,10 @@ pub fn run() {
     }
     tauri::Builder::default()
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        // Arrasto para **fora** do app por OLE (`CF_HDROP` com o caminho): é o
+        // único caminho sem teto de tamanho. O `DownloadURL` do Chromium leva os
+        // bytes e para de funcionar entre 3 e 25 MB.
+        .plugin(tauri_plugin_drag::init())
         // Imagens saem do banco cifrado por aqui: `http://rayclip.localhost/img/<id>`
         // (Windows não aceita esquema próprio sem esse ".localhost").
         .register_uri_scheme_protocol("rayclip", |ctx, request| {
@@ -3118,6 +3277,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             list_entries,
             drag_payload,
+        drag_files,
             drag_start,
             drag_end,
             search_entries,
@@ -3128,6 +3288,7 @@ pub fn run() {
             link_entry,
             thumb_entry,
             ocr_entry,
+            ocr_disponivel,
             copy_ocr_text,
             copy_entry,
             paste_entry,
@@ -3443,6 +3604,46 @@ pub fn run() {
             }
             _ => {}
         })
-        .run(tauri::generate_context!())
+        .run(contexto)
         .expect("error while running rayclip");
+}
+
+#[cfg(test)]
+mod arrasto {
+    use super::*;
+
+    /// O arrasto do sistema leva **caminho**, não bytes: arquivo local e
+    /// existente tem que sair inteiro, sem teto de tamanho.
+    #[test]
+    fn arquivo_local_existente_vira_caminho() {
+        let tmp = std::env::temp_dir().join("rayclip-teste-arrasto.txt");
+        std::fs::write(&tmp, b"conteudo").unwrap();
+        let saida = caminho_de_arrasto(&tmp).unwrap();
+        assert!(saida.ends_with("rayclip-teste-arrasto.txt"));
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    /// Arquivo que sumiu do disco: o arrasto não pode começar apontando para o
+    /// vazio (o Explorer criaria nada e o usuário veria um gesto sem resultado).
+    #[test]
+    fn arquivo_inexistente_e_recusado() {
+        let tmp = std::env::temp_dir().join("rayclip-nao-existe-9999.bin");
+        let _ = std::fs::remove_file(&tmp);
+        assert!(caminho_de_arrasto(&tmp).is_err());
+    }
+
+    /// Caminho de rede (`\\servidor\...) derruba o plugin de arrasto.
+    #[test]
+    fn caminho_de_rede_e_recusado() {
+        let p = std::path::Path::new(r"\\servidor\pasta\arquivo.zip");
+        let erro = caminho_de_arrasto(p).unwrap_err();
+        assert!(erro.contains("rede"), "erro inesperado: {erro}");
+    }
+
+    /// Diretório não é arquivo: `CF_HDROP` de pasta sai diferente no Explorer e
+    /// não é o que a lista oferece.
+    #[test]
+    fn diretorio_e_recusado() {
+        assert!(caminho_de_arrasto(&std::env::temp_dir()).is_err());
+    }
 }

@@ -14,6 +14,7 @@ import io
 import json
 import os
 import subprocess
+import cdp_env
 import sys
 import time
 import urllib.request
@@ -61,7 +62,8 @@ def mostrar(espera=6.0):
     hwnd = h.find_window("rayclip.exe")
     if hwnd:
         return hwnd
-    subprocess.Popen([EXE], creationflags=0x08000008, stdin=subprocess.DEVNULL,
+    subprocess.Popen([EXE], creationflags=0x08000008, env=cdp_env.env_cdp(),
+                     stdin=subprocess.DEVNULL,
                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     fim = time.time() + espera
     while time.time() < fim:

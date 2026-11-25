@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { startDrag } from "@crabnebula/tauri-plugin-drag";
 import * as api from "../api";
 import type { Entry } from "../lib/types";
 import { displayTitle, mediaUrl } from "../lib/format";
@@ -44,24 +45,123 @@ function payloadCache() {
   return _payloads;
 }
 
+/**
+ * Caminhos no disco por id, quando a entrada **tem** arquivo.
+ *
+ * O arrasto do sistema (`CF_HDROP` via OLE) leva o caminho e não tem teto de
+ * tamanho; o `DownloadURL` do Chromium leva os bytes e para de funcionar entre 3
+ * e 25 MB. A busca acontece no hover porque, no instante do gesto, é preciso
+ * saber **de forma síncrona** qual dos dois caminhos usar (o `draggable` da linha
+ * tem que ser desligado antes de o Chromium resolver iniciar o arrasto dele).
+ */
+let _caminhos: Map<string, string[]> | null = null;
+function caminhosCache() {
+  if (!_caminhos) _caminhos = new Map();
+  return _caminhos;
+}
+
+function buscarCaminhos(id: string) {
+  if (caminhosCache().has(id)) return;
+  void api
+    .dragFiles(id)
+    .then((c) => {
+      if (c.length) caminhosCache().set(id, c);
+    })
+    .catch(() => {});
+}
+
+/**
+ * Adianta o arrasto da linha: caminho primeiro, bytes **só** se não houver
+ * caminho.
+ *
+ * A ordem importa: pedir os dois ao mesmo tempo fazia o `drag_payload` ler o
+ * arquivo inteiro (25 MB → base64) mesmo quando o arrasto ia pelo OLE só com o
+ * caminho — o log mostrava `drag payload: … 26214400 bytes` em cada arrasto de
+ * zip grande.
+ */
+function prefetchArrasto(id: string, semArquivo: () => void) {
+  if (caminhosCache().has(id)) return;
+  void api
+    .dragFiles(id)
+    .then((c) => {
+      if (c.length) caminhosCache().set(id, c);
+      else semArquivo();
+    })
+    .catch(semArquivo);
+}
+
+/**
+ * A entrada é arquivo (ou imagem no banco) e portanto sai pelo arrasto do
+ * sistema.
+ *
+ * Decidido pelo **tipo da entrada**, de forma síncrona: depender do caminho já
+ * ter chegado (prefetch do hover) fazia o gesto rápido — pegar e arrastar na
+ * hora — cair no caminho do Chromium, que é justamente o que falha acima de
+ * ~3 MB. O backend ainda confirma no `drag_files` (se o arquivo sumiu, o arrasto
+ * não começa).
+ */
+function arquivoProvavel(entry: Entry): boolean {
+  if (entry.hasImage) return true;
+  if (entry.paths.length > 0) return true;
+  return (
+    entry.kind === "file" ||
+    entry.kind === "files" ||
+    entry.kind === "pdf" ||
+    entry.kind === "video" ||
+    entry.kind === "audio" ||
+    entry.kind === "archive"
+  );
+}
+
+/**
+ * Arrasto do sistema: o Explorer (ou qualquer alvo OLE) recebe `CF_HDROP` com o
+ * caminho. Nada é copiado para a memória do app, então um `.exe` de 25 MB (ou
+ * 120 MB) chega inteiro.
+ */
+async function arrastarArquivo(id: string) {
+  if (_arrastando) return;
+  // Gesto rápido: o caminho pode não ter vindo no hover. Buscar aqui mesmo
+  // (é só `is_file`, sem ler byte nenhum).
+  let caminhos = caminhosCache().get(id);
+  if (!caminhos?.length) {
+    try {
+      const c = await api.dragFiles(id);
+      if (c.length) {
+        caminhosCache().set(id, c);
+        caminhos = c;
+      }
+    } catch (e) {
+      console.warn("arrasto do sistema indisponivel:", e);
+      return;
+    }
+  }
+  if (!caminhos?.length || _arrastando) return;
+  _arrastando = true;
+  void api.dragStart();
+  const fim = () => {
+    if (!_arrastando) return;
+    _arrastando = false;
+    void api.dragEnd();
+  };
+  try {
+    // `startDrag` só volta quando o gesto termina (drop ou cancelamento).
+    await startDrag({ item: caminhos, icon: "" }, fim);
+  } catch (e) {
+    console.warn("arrasto do sistema falhou:", e);
+  } finally {
+    fim();
+    // Rede de segurança: se o plugin não chamar o callback, a lista não pode
+    // ficar com `_arrastando` preso (ela pararia de esconder a janela).
+    window.setTimeout(fim, 60_000);
+  }
+}
+
 /** base64 → `blob:` URL do mesmo conteúdo. */
 function blobUrl(base64: string, mime: string): string {
   const bin = atob(base64);
   const bytes = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i);
   return URL.createObjectURL(new Blob([bytes], { type: mime }));
-}
-
-/**
- * Arquivo que já está no disco → `file:///` URL.
- *
- * Sem isso um `.zip` de 25 MB era lido inteiro, virado base64 e baixado de volta
- * — sendo que o Explorer só precisa do caminho.
- */
-function fileUrl(caminho: string): string {
-  // `encodeURI`: espaço/acento no nome invalida o `file:` e o Chromium cancela o
-  // arrasto no mesmo instante.
-  return "file:///" + encodeURI(caminho.replace(/\\/g, "/"));
 }
 
 /** Miniatura da linha: poster estático para GIF (não anima na lista). */
@@ -110,6 +210,9 @@ function EntryRow({
   // `mousedown`/hover, porque o `dragstart` precisa dele **síncrono**. Sem
   // payload pronto, o arrasto é cancelado em vez de abrir um fantasma vazio.
   const arrastou = useRef(false);
+  // Ponto onde o botão desceu; o arrasto começa no primeiro movimento >4 px.
+  const press = useRef<{ x: number; y: number } | null>(null);
+  const porArquivo = arquivoProvavel(entry);
   // Hover parado por 250 ms adianta o payload (inclusive de arquivos do disco)
   // sem ler 30 MB cada vez que o mouse atravessa a lista.
   const espera = useRef<number | null>(null);
@@ -118,7 +221,8 @@ function EntryRow({
     if (espera.current !== null) window.clearTimeout(espera.current);
     espera.current = window.setTimeout(() => {
       espera.current = null;
-      buscarPayload();
+      // Caminho primeiro: se existir, o arrasto nem precisa dos bytes.
+      prefetchArrasto(entry.id, buscarPayload);
     }, 250);
   };
   const aoSair = () => {
@@ -162,10 +266,41 @@ function EntryRow({
       onMouseLeave={aoSair}
       onMouseDown={() => {
         arrastou.current = false;
-        buscarPayload();
+        prefetchArrasto(entry.id, buscarPayload);
       }}
-      draggable
+      onPointerDown={(e) => {
+        if (e.button !== 0) return;
+        press.current = { x: e.clientX, y: e.clientY };
+      }}
+      onPointerMove={(e) => {
+        const p = press.current;
+        if (!p || _arrastando) return;
+        if ((e.buttons & 1) === 0) {
+          press.current = null;
+          return;
+        }
+        // Mesmo limiar de 4 px dos gerenciadores de arquivo: clique que treme
+        // continua sendo clique.
+        if (Math.hypot(e.clientX - p.x, e.clientY - p.y) < 4) return;
+        press.current = null;
+        if (!porArquivo) return; // texto/link/cor: arrasto do Chromium
+        arrastou.current = true;
+        void arrastarArquivo(entry.id);
+      }}
+      onPointerUp={() => {
+        press.current = null;
+      }}
+      onPointerCancel={() => {
+        press.current = null;
+      }}
+      // Linha que é arquivo **não** ganha o `draggable` do Chromium: dois
+      // arrastos ao mesmo tempo (o do navegador e o do sistema) travam a janela.
+      draggable={!porArquivo}
       onDragStart={(e) => {
+        if (porArquivo) {
+          e.preventDefault();
+          return;
+        }
         const p = payloadCache().get(entry.id);
         if (!p) {
           e.preventDefault();

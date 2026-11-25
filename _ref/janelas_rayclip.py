@@ -10,6 +10,7 @@ import ctypes
 import io
 import os
 import subprocess
+import cdp_env
 import time
 from ctypes import wintypes as w
 
@@ -48,7 +49,7 @@ def main():
     hwnd_topo = h.find_window("rayclip.exe")
     if not hwnd_topo:
         subprocess.Popen(
-            [EXE], creationflags=0x08000008,
+            [EXE], creationflags=0x08000008, env=cdp_env.env_cdp(),
             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
         for _ in range(12):
