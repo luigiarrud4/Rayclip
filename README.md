@@ -513,6 +513,18 @@ copiou, então se o gerenciador não publicar o marcador o conteúdo entra no
 histórico dele. A decisão fica nossa, de propósito, e o interruptor "Also capture
 passwords & protected content" desliga o filtro quando você quiser.
 
+### Novidades da v0.1.45 — a barra de título que aparecia em alguns PCs
+
+- Em máquinas onde o DWM não estava compondo quando o app abriu, o Windows
+  desenhava a barra de título clássica por cima da interface, e ela piscava ao
+  mover/clicar. A causa: o estilo da janela sempre teve `WS_CAPTION` (é o `tao`
+  quem monta assim) e quem a escondia era só uma política do DWM — pedida **uma
+  vez**, no start, sem checar se foi aceita.
+- Agora a janela responde `WM_NCPAINT` com 0 (o tema clássico não pinta nada) e a
+  política do DWM é reafirmada quando o DWM, o tema ou o estilo mudam.
+- O redimensionamento pela borda continua funcionando: tirar `WS_CAPTION` do
+  estilo resolveria a barra, mas **matava o resize** (medido).
+
 ### Novidades da v0.1.44 — filtro de vídeos e prévia única
 
 - **Somente vídeos** entrou no menu de tipos (antes o vídeo só aparecia em

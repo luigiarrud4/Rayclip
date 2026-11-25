@@ -416,30 +416,112 @@ pub fn root_of(h: isize) -> isize {
 // Moldura: garante que **nenhuma** máquina desenhe botões nativos
 // ---------------------------------------------------------------------------
 
-/// Versão alternativa do ajuste de moldura: não mexe no estilo da janela, e sim
-/// pede ao DWM para **não desenhar** a área não-cliente (barra de título e
-/// botões). Trocar `WS_CAPTION` por `WS_POPUP` em tempo de execução mexeu com o
-/// teste de acerto do mouse (o clique passou a cair na área de trabalho), então
-/// esse caminho fica como experimento e o escolhido é este.
-pub fn strip_caption_sem_quebrar(h: isize) -> (u32, u32) {
+/// Pede ao DWM para **não desenhar** a área não-cliente (barra de título e
+/// botões). Devolve o `HRESULT` da chamada: `DWM_E_COMPOSITIONDISABLED`
+/// (0x8026_3000) significa que nesta máquina o pedido foi ignorado — é
+/// exatamente o caso em que a barra clássica aparecia.
+pub fn politica_dwm(h: isize) -> i32 {
     if h == 0 {
-        return (0, 0);
+        return -1;
     }
     use windows_sys::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_NCRENDERING_POLICY};
-    use windows_sys::Win32::UI::WindowsAndMessaging::{GetWindowLongW, GWL_STYLE};
     const DWMNCRP_DISABLED: u32 = 1;
-    let antes = unsafe { GetWindowLongW(h as HWND, GWL_STYLE) as u32 };
     let politica: u32 = DWMNCRP_DISABLED;
     unsafe {
-        let _ = DwmSetWindowAttribute(
+        DwmSetWindowAttribute(
             h as _,
             DWMWA_NCRENDERING_POLICY as u32,
             &politica as *const _ as *const core::ffi::c_void,
             std::mem::size_of_val(&politica) as u32,
-        );
+        )
     }
-    let depois = unsafe { GetWindowLongW(h as HWND, GWL_STYLE) as u32 };
-    (antes, depois)
+}
+
+// ---------------------------------------------------------------------------
+// Moldura: o tema clássico não pinta nada, e o DWM não volta atrás
+// ---------------------------------------------------------------------------
+
+const REAFIRMA_WM: u32 = 0x8000 + 0x51; // WM_APP + 81
+
+/// Subclasse da janela principal.
+///
+/// O tao monta o estilo de **toda** janela sem moldura com
+/// `WS_CAPTION | WS_SYSMENU | WS_CLIPSIBLINGS` (`to_window_styles()`) e se apoia
+/// só no `WM_NCCALCSIZE` + no DWM para a barra não aparecer. Tirar `WS_CAPTION`
+/// do estilo resolve pela raiz, mas **quebra o redimensionamento pela borda**
+/// (medido: a janela deixa de crescer ao arrastar a borda; com o estilo intacto
+/// ela cresce 900x660 -> 960x720), porque quem oferece a alça de resize aqui é
+/// a moldura do sistema.
+///
+/// Então o caminho é o documentado para janela sem moldura:
+///   * `WM_NCPAINT` -> 0: numa máquina **sem** composição (VM, RDP, DWM ainda
+///     subindo no logon) quem desenha a barra é o tema clássico, e é este
+///     `DefWindowProc` que ele usa. Responder 0 é o que a Microsoft documenta
+///     para "remover a moldura e os itens de legenda".
+///   * `WM_DWMCOMPOSITIONCHANGED` / `WM_THEMECHANGED` / `WM_STYLECHANGED`:
+///     reafirma a política do DWM. Era este o furo: a política era pedida **uma
+///     vez**, no `setup`; se o DWM ainda não estava compondo (autostart no
+///     logon, máquina lenta) o pedido era recusado com
+///     `DWM_E_COMPOSITIONDISABLED` e ninguém tentava de novo — aí a barra ficava
+///     e repintava a cada ativação/movimento (o "pisca").
+unsafe extern "system" fn moldura_proc(
+    hwnd: HWND,
+    msg: u32,
+    wp: usize,
+    lp: isize,
+    _id: usize,
+    _data: usize,
+) -> isize {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        WM_DWMCOMPOSITIONCHANGED, WM_NCPAINT, WM_STYLECHANGED, WM_THEMECHANGED,
+    };
+    match msg {
+        WM_NCPAINT => 0,
+        // Reafirma em segundo plano: chamar `DwmSetWindowAttribute` dentro do
+        // callback de mudança de estilo é pedir recursão.
+        WM_STYLECHANGED | WM_DWMCOMPOSITIONCHANGED | WM_THEMECHANGED => {
+            PostMessageW(hwnd, REAFIRMA_WM, 0, 0);
+            DefSubclassProc(hwnd, msg, wp, lp)
+        }
+        REAFIRMA_WM => politica_dwm(hwnd as isize) as isize,
+        _ => DefSubclassProc(hwnd, msg, wp, lp),
+    }
+}
+
+static MOLDA_INSTALADA: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
+
+#[link(name = "comctl32")]
+extern "system" {
+    fn SetWindowSubclass(
+        hwnd: HWND,
+        pfn: unsafe extern "system" fn(HWND, u32, usize, isize, usize, usize) -> isize,
+        id: usize,
+        data: usize,
+    ) -> i32;
+    fn DefSubclassProc(hwnd: HWND, msg: u32, wp: usize, lp: isize) -> isize;
+}
+
+#[link(name = "user32")]
+extern "system" {
+    fn PostMessageW(hwnd: HWND, msg: u32, wp: usize, lp: isize) -> i32;
+}
+
+/// Desliga o NC no DWM **e** instala a subclasse que mantém isso valendo quando
+/// o Windows ou o tao mexem no estilo de novo. Idempotente.
+pub fn sem_moldura(h: isize) -> i32 {
+    if h == 0 {
+        return -1;
+    }
+    let hr = politica_dwm(h);
+    // Uma subclasse por janela: o `AtomicIsize` guarda qual hwnd já tem a sua.
+    use std::sync::atomic::Ordering;
+    if MOLDA_INSTALADA.load(Ordering::Relaxed) != h {
+        let ocupada = unsafe { SetWindowSubclass(h as HWND, moldura_proc, 1, 0) };
+        if ocupada != 0 {
+            MOLDA_INSTALADA.store(h, Ordering::Relaxed);
+        }
+    }
+    hr
 }
 /// Classe de uma janela por handle.
 pub fn class_of_hwnd(h: isize) -> String {

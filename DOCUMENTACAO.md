@@ -8,11 +8,11 @@ dele é usado; só o resultado visual e funcional foi reproduzido.
 
 - Pasta do projeto: `C:\Users\Lugia\Projects\rayclip`
 - Stack: **Tauri v2 (Rust) + React + TypeScript + WebView2**
-- Versão atual: **0.1.44**
-- Binário: `src-tauri/target/release/rayclip.exe` (11.124.224 B, SHA256
+- Versão atual: **0.1.45**
+- Binário: `src-tauri/target/release/rayclip.exe` (11.124.736 B, SHA256
   `2b2ebc5920ce94f3bb39c4242e20a3d1b2d6a7b2962f3fb88a47b696778b8b8f`)
-- Instalador: `src-tauri/target/release/bundle/nsis/Rayclip_0.1.44_x64-setup.exe`
-  (3.814.968 B)
+- Instalador: `src-tauri/target/release/bundle/nsis/Rayclip_0.1.45_x64-setup.exe`
+  (3.809.410 B)
 
 Este documento explica **o que o app faz, como é feito por dentro e como cada
 problema difícil foi resolvido** (com a medição usada para provar).
@@ -837,6 +837,90 @@ legível em disco; clique seleciona / duplo clique cola; `Backspace` na busca n�
 apaga nada.
 
 Tabela completa de mais de 30 testes com resultados: ver `README.md`.
+### 8.59 A barra de título "do Windows 7" que aparecia em uns PCs (v0.1.45)
+
+Sintoma: em máquinas de amigos e na VM, às vezes aparecia a barra de título
+clássica (aquela dos botões quadradinhos) sobre a interface, e ela **piscava** ao
+mover a janela ou clicar em algo. Não acontecia neste PC.
+
+#### Por que aparecia: o estilo sempre teve `WS_CAPTION`
+
+O `tao` 0.37.3 monta o estilo de **toda** janela com
+`WS_CAPTION | WS_CLIPSIBLINGS | WS_SYSMENU` (`window_state.rs`,
+`to_window_styles()`) e só tira o `WS_CAPTION` na variante usada para **medir**
+(`to_adjusted_window_styles()`, que alimenta `AdjustWindowRectEx`). Ou seja: a
+janela é criada com o estilo de uma janela **com** barra de título e sem moldura
+apenas no `WM_NCCALCSIZE` (o tao devolve 0, então o cliente ocupa tudo).
+
+Medido neste PC, na janela em execução:
+
+```
+style=0x14cf0000  caption=True  thickframe=True  sysmenu=True
+janela=(900, 660) cliente=(900, 660)
+```
+
+Com o cliente ocupando a janela inteira, quem fazia a barra não existir era
+**só** o DWM: `DWMWA_NCRENDERING_POLICY = DWMNCRP_DISABLED`.
+
+#### O furo: a política era pedida **uma vez**
+
+O pedido era feito no `setup`, com `let _ = DwmSetWindowAttribute(...)` — o
+`HRESULT` era descartado. A documentação diz que, quando a composição não está
+ativa, a chamada devolve `DWM_E_COMPOSITIONDISABLED`: o pedido é **ignorado e
+ninguém tenta de novo**. Aí o tema clássico é quem desenha a área não-cliente —
+a barra "do Windows 7" — e ela é repintada em toda ativação/movimento: o pisca.
+
+Isso explica "às vezes sim, às vezes não": depende de o DWM já estar compondo no
+instante em que o app abriu (autostart no logon, máquina sem GPU, VM, sessão
+RDP). Neste PC ele está pronto antes do app — por isso nunca apareceu aqui.
+
+#### O que **não** funcionou: tirar `WS_CAPTION` do estilo
+
+É a solução "de manual" (remover o bit e complementar com `WM_NCCALCSIZE`), e foi
+o primeiro caminho. Medido: com o bit fora (`0x140f0000`), `WM_NCHITTEST`
+continua respondendo `HTBOTTOMRIGHT` (17) no canto... mas **arrastar a borda
+deixa de redimensionar**. Com o estilo original, a mesma medição cresce a janela
+de `960x720` para `1040x720`; sem o bit, nada acontece. Quem oferece a alça de
+resize neste app é a moldura do sistema — tirá-la quebra o recurso.
+
+#### O que ficou: `WM_NCPAINT -> 0` + reafirmação do DWM
+
+Duas camadas, nenhuma delas mexendo no estilo:
+
+1. **Subclasse da janela** (`SetWindowSubclass`, comctl32) respondendo `0` a
+   `WM_NCPAINT`. É o que a Microsoft documenta: numa janela **sem** composição,
+   é o `DefWindowProc` de `WM_NCPAINT` que pinta a barra; responder 0 remove
+   moldura e itens de legenda. Com isso, nem o tema clássico pinta nada.
+2. **Reafirmação da política do DWM** em `WM_DWMCOMPOSITIONCHANGED`,
+   `WM_THEMECHANGED` e `WM_STYLECHANGED` (por `PostMessage`, para não reentrar no
+   próprio callback), mais uma vez a cada `show_window` — porque `show()` e
+   `set_always_on_top()` fazem o tao reaplicar os estilos da janela.
+
+#### Medições (`_ref/teste_moldura.py`, build de depuração)
+
+| # | O que | Resultado |
+|---|---|---|
+| 1 | `DWMWA_NCRENDERING_ENABLED` ao abrir | `False` (hr `0x00000000`) |
+| 2 | depois de esconder/mostrar | `False` (a política sobrevive ao reaplicar estilos) |
+| 3 | sabotagem: forçar `DWMNCRP_ENABLED` e mandar `WM_THEMECHANGED` | forçado=`True` → depois=`False` (a subclasse está viva e reafirma) |
+| 4 | arrastar a borda direita | `960x720` → `1040x720` (resize intacto) |
+
+A sabotagem do item 3 é a prova que importa: ela reproduz o estado de falha (DWM
+voltando a desenhar o NC) e mostra que a subclasse o desfaz sozinha.
+
+**Latência de abrir** (do key DOWN até `IsWindowVisible`, 6 amostras):
+antes `3,8 / 3,9 / 3,9 / 4,4 / 4,5 / 4,9 ms` (mediana 4,4); depois
+`3,8 / 4,1 / 4,4 / 4,7 / 4,8 / 5,0 ms` (mediana 4,7). As faixas se sobrepõem —
+o custo do `sem_moldura` no `show_window` (uma chamada ao DWM e um `Atomic`
+quando a subclasse já existe) está dentro do ruído da medição. Fica registrado,
+sem afirmar ganho nem perda.
+
+**Print do topo da janela**: cantos arredondados, nenhuma faixa nativa, nenhuma
+linha de moldura sobrando.
+
+`cargo test --lib` 61/61 · `cargo clippy --all-targets` 0 avisos · `npx tsc
+--noEmit` 0.
+
 ### 8.58 Filtro "Somente vídeos" e a prévia duplicada do vídeo (v0.1.44)
 
 Dois ajustes que o usuário pediu depois de abrir um `.mp4` no app.

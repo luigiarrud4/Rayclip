@@ -2834,6 +2834,14 @@ fn show_window(app: &AppHandle) {
         let _ = win.show();
         let _ = win.set_always_on_top(true);
         if let Ok(h) = win.hwnd() {
+            // `show()` e `set_always_on_top()` fazem o tao reaplicar os estilos
+            // da janela, e `to_window_styles()` do tao repõe `WS_CAPTION` em
+            // toda janela sem moldura. A subclasse já corta isso, mas reafirmar
+            // aqui é barato (3 chamadas) e garante que nada pisca na abertura.
+            let hr = win32::sem_moldura(h.0 as isize);
+            if hr != 0 {
+                log(&format!("moldura: DWM recusou o NC (hr=0x{hr:08x})"));
+            }
             win32::force_foreground(h.0 as isize);
         }
         let _ = app.emit("clipboard:focus", ());
@@ -3760,12 +3768,8 @@ pub fn run() {
                     // Sem barra de título nativa em **nenhuma** máquina: num PC
                     // de outro usuário os três botões do Windows apareceram
                     // mesmo com `decorations: false`.
-                    let (antes, depois) = win32::strip_caption_sem_quebrar(h.0 as isize);
-                    log(&format!(
-                        "moldura: estilo 0x{antes:08x} -> 0x{depois:08x} (caption={}, sysmenu={})",
-                        depois & 0x00C0_0000 != 0,
-                        depois & 0x0008_0000 != 0
-                    ));
+                    let hr = win32::sem_moldura(h.0 as isize);
+                    log(&format!("moldura: subclasse instalada, dwm=0x{hr:08x}"));
                     // Mica (translúcido) já no primeiro desenho, sem "flash".
                     let blur = cfg.translucent && sysinteg::windows_transparency();
                     win32::apply_backdrop(h.0 as isize, if blur { 2 } else { 1 });
