@@ -20,6 +20,8 @@ export interface LinkMeta {
   url?: string | null;
   /** Já tentamos buscar o título e o site não entregou (bloqueio/JS). */
   tried?: boolean;
+  /** A capa é um loop mp4/webm (página de GIF): toca em `<video>`, não `<img>`. */
+  coverVideo?: boolean;
 }
 
 export interface Entry {

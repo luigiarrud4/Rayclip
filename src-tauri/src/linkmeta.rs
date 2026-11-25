@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 const ICON_MAX: usize = 400_000;
 
 /// Versão do buscador de metadados (ver `LinkMeta::fetch_v`).
-pub const FETCH_VERSION: u32 = 5;
+pub const FETCH_VERSION: u32 = 6;
 
 const UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 \
 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
@@ -20,8 +20,14 @@ pub struct LinkMeta {
     pub site_name: Option<String>,
     /// Favicon em data URL (pequeno, cabe no JSON).
     pub icon: Option<String>,
-    /// Capa (og:image) como data URL — vai cifrada dentro do banco, não em disco.
+    /// Capa (`og:image`) servida por `http://rayclip.localhost/cover/<hash>`.
     pub image_path: Option<String>,
+    /// A capa é um **vídeo** (loop `.mp4`/`.webm`, o que Klipy/Tenor/Giphy
+    /// usam por trás de uma página de GIF): a interface toca em
+    /// `<video muted loop autoplay>` em vez de `<img>`. É o mesmo que o Discord
+    /// faz — GIF de 20 MB vira um mp4 de 2 MB que toca sem gastar CPU.
+    #[serde(default)]
+    pub cover_video: bool,
     pub url: Option<String>,
     /// Já tentamos buscar metadados e o site não entregou título (bloqueio de
     /// bot, página só de JS). Evita re-tentar a mesma URL a cada abertura.
@@ -43,7 +49,14 @@ pub struct LinkMeta {
 /// que resolva **exclusivamente** para enderecos publicos.
 /// Teto para capa de **mídia direta** (GIF de tenor/giphy costuma ter 1–8 MB;
 /// og:image de página fica nos 900 KB de antes).
-const MIDIA_MAX: usize = 8 * 1024 * 1024;
+const MIDIA_MAX: usize = 12 * 1024 * 1024;
+
+/// Teto de capa de **página**. O teto antigo (900 KB) cortava o GIF no meio com
+/// `read_to_end().take()`: o arquivo era gravado truncado e o cartão mostrava
+/// um GIF parado, pela metade ou em branco — foi o "alguns GIFs não carregam
+/// corretamente". Agora o download é o arquivo inteiro e, se passar do teto, a
+/// capa é **recusada** (imagem nenhuma é melhor que meia imagem).
+const CAPA_MAX: usize = 12 * 1024 * 1024;
 
 /// Guarda os bytes da capa em `media/covers/<hash da URL>` e devolve a URL do
 /// protocolo próprio. Bytes **crus**: um GIF animado continua animado (é o que
@@ -68,6 +81,37 @@ fn extensao_de_midia(url: &str) -> Option<&'static str> {
         "mp4" | "webm" | "mov" => Some("video"),
         _ => None,
     }
+}
+
+/// Baixa a primeira candidata que der certo e guarda como capa.
+///
+/// Devolve `(url local, é vídeo)`. Descarta download **truncado** (bateu no
+/// teto) em vez de gravar meia imagem — era o defeito do teto de 900 KB.
+pub fn baixar_capa(
+    media: &std::path::Path,
+    base: &str,
+    candidatas: &[String],
+) -> Option<(String, bool)> {
+    for bruta in candidatas {
+        let alvo = resolve(base, bruta);
+        if !url_permitida(&alvo) {
+            continue;
+        }
+        let Some((ct, bytes)) = http_get(&alvo, CAPA_MAX) else {
+            continue;
+        };
+        let video = capa_e_video(&bytes);
+        if !video && sniff_ext(&bytes, &ct).is_none() {
+            continue;
+        }
+        if bytes.len() >= CAPA_MAX {
+            continue; // veio pela metade
+        }
+        if let Some(url_capa) = guarda_capa(media, &alvo, &bytes) {
+            return Some((url_capa, video));
+        }
+    }
+    None
 }
 
 pub fn url_permitida(url: &str) -> bool {
@@ -659,6 +703,42 @@ fn find_icon(html: &str) -> Option<String> {
     best.map(|(_, href)| href)
 }
 
+/// A capa é um vídeo (mp4/mov ou webm)?
+///
+/// Página de GIF hoje quase sempre oferece o loop em mp4/webm no `og:video`.
+pub fn capa_e_video(b: &[u8]) -> bool {
+    if b.len() > 12 && &b[4..8] == b"ftyp" {
+        return true; // mp4/mov/m4v: caixa `ftyp` no começo
+    }
+    b.starts_with(b"RIFF") && b.len() > 12 && &b[8..12] == b"WEBM"
+}
+
+/// `giphy.com/gifs/<qualquer-coisa>-<ID>` -> `https://media.giphy.com/media/<ID>/giphy.gif`.
+///
+/// Medido: a página do Giphy, para qualquer cliente que não seja um navegador
+/// de verdade, entrega `og:image` = **logo da marca** (um gif genérico de
+/// 517x517). O Post de verdade só sai pela URL direta, que responde 200
+/// `image/gif` sem chave nenhuma — o id está no fim do slug.
+fn giphy_direto(url: &str) -> Option<String> {
+    let host = host_of(url);
+    if host != "giphy.com" && !host.ends_with(".giphy.com") {
+        return None;
+    }
+    if host.starts_with("media.") || host.starts_with("i.") {
+        return None;
+    }
+    let sem_query = url.split(['?', '#']).next().unwrap_or(url);
+    let partes: Vec<&str> = sem_query.split('/').collect();
+    let pos = partes.iter().position(|p| *p == "gifs" || *p == "embed")?;
+    let slug = *partes.get(pos + 1)?;
+    let id = slug.rsplit('-').next()?;
+    let id_ok = (8..=40).contains(&id.len()) && id.chars().all(|c| c.is_ascii_alphanumeric());
+    if !id_ok {
+        return None;
+    }
+    Some(format!("https://media.giphy.com/media/{id}/giphy.gif"))
+}
+
 fn sniff_ext(bytes: &[u8], ctype: &str) -> Option<&'static str> {
     if bytes.starts_with(&[0x89, b'P', b'N', b'G']) {
         return Some("png");
@@ -671,6 +751,9 @@ fn sniff_ext(bytes: &[u8], ctype: &str) -> Option<&'static str> {
     }
     if bytes.starts_with(b"RIFF") && bytes.len() > 11 && &bytes[8..12] == b"WEBP" {
         return Some("webp");
+    }
+    if capa_e_video(bytes) {
+        return Some("mp4");
     }
     if bytes.starts_with(&[0, 0, 1, 0]) {
         return Some("ico");
@@ -686,6 +769,8 @@ fn sniff_ext(bytes: &[u8], ctype: &str) -> Option<&'static str> {
             ("image/gif", "gif"),
             ("image/webp", "webp"),
             ("image/x-icon", "ico"),
+            ("video/mp4", "mp4"),
+            ("video/webm", "webm"),
             ("image/vnd.microsoft.icon", "ico"),
         ] {
             if t == key {
@@ -960,15 +1045,20 @@ pub fn fetch(url: &str, media: &std::path::Path) -> Option<LinkMeta> {
         // Link colado que **é** a mídia (tenor/giphy/IMGUR direto): baixa e
         // guarda como capa. É o "só mandar o link e o GIF aparece" do Discord —
         // e como os bytes vão crus para o disco, o GIF anima na tela.
-        let parece_imagem = ct.starts_with("image/") || extensao_de_midia(&url) == Some("imagem");
-        if parece_imagem && !url_permitida(&url) {
+        let ct_l = ct.to_ascii_lowercase();
+        let parece_imagem =
+            ct_l.starts_with("image/") || extensao_de_midia(&url) == Some("imagem");
+        let parece_video = ct_l.starts_with("video/") || extensao_de_midia(&url) == Some("video");
+        if (parece_imagem || parece_video) && !url_permitida(&url) {
             return Some(meta);
         }
-        if parece_imagem {
+        if parece_imagem || parece_video {
             if let Some((ct2, bytes)) = http_get(&url, MIDIA_MAX) {
-                let conhecida = sniff_ext(&bytes, &ct2).is_some();
-                if conhecida {
+                let video = capa_e_video(&bytes);
+                let conhecida = video || sniff_ext(&bytes, &ct2).is_some();
+                if conhecida && bytes.len() < MIDIA_MAX {
                     meta.image_path = guarda_capa(media, &url, &bytes);
+                    meta.cover_video = video;
                 }
             }
         }
@@ -1012,6 +1102,7 @@ pub fn fetch(url: &str, media: &std::path::Path) -> Option<LinkMeta> {
         site_name: meta_content(&html, &["og:site_name"]).or_else(|| Some(host_of(&url))),
         icon: None,
         image_path: None,
+        cover_video: false,
         fetch_v: Some(FETCH_VERSION),
     };
     if let Some(d) = &meta.description {
@@ -1032,26 +1123,43 @@ pub fn fetch(url: &str, media: &std::path::Path) -> Option<LinkMeta> {
     // (a página sem cookies às vezes vem sem metadados). Lista de candidatas,
     // em ordem de qualidade — a primeira que baixar vira a prévia.
     let mut candidatos: Vec<String> = Vec::new();
-    if let Some(img) = meta_content(&html, &["og:image:secure_url", "og:image", "twitter:image"]) {
-        candidatos.push(resolve(&url, &img));
+    // 1. Regra do provedor: quando a página esconde a mídia de robôs, a URL
+    //    direta sai do próprio endereço (Giphy). Sem chave, sem navegador.
+    if let Some(direto) = giphy_direto(&url) {
+        candidatos.push(direto);
+    }
+    // 2. Metadados da página.
+    let og_img = meta_content(&html, &["og:image:secure_url", "og:image", "twitter:image"]);
+    let og_vid = meta_content(
+        &html,
+        &["og:video:secure_url", "og:video:url", "og:video"],
+    );
+    let imagem_animada = og_img.as_deref().is_some_and(|u| {
+        let l = u.to_ascii_lowercase();
+        l.contains(".gif") || l.contains(".webp")
+    });
+    // 3. Página de GIF: o `og:video` (mp4/webm do loop) vem **antes** do gif —
+    //    baixa rápido e toca sem decodificar 20 MB de GIF.
+    if imagem_animada {
+        if let Some(v) = &og_vid {
+            candidatos.push(v.clone());
+        }
+    }
+    if let Some(img) = &og_img {
+        candidatos.push(img.clone());
+    }
+    if !imagem_animada {
+        if let Some(v) = &og_vid {
+            candidatos.push(v.clone());
+        }
     }
     if let Some(id) = youtube_id(&url) {
         candidatos.push(format!("https://i.ytimg.com/vi/{id}/maxresdefault.jpg"));
         candidatos.push(format!("https://i.ytimg.com/vi/{id}/hqdefault.jpg"));
     }
-    for img_url in candidatos {
-        let Some((ct, bytes)) = http_get(&img_url, 900_000) else {
-            continue;
-        };
-        if sniff_ext(&bytes, &ct).is_none() {
-            continue;
-        }
-        // Guarda em disco e serve por URL: um data URL de capa (até 900 KB)
-        // entraria na listagem inteira, a cada abertura.
-        if let Some(url_capa) = guarda_capa(media, &img_url, &bytes) {
-            meta.image_path = Some(url_capa);
-            break;
-        }
+    if let Some((url_capa, video)) = baixar_capa(media, &url, &candidatos) {
+        meta.image_path = Some(url_capa);
+        meta.cover_video = video;
     }
 
     Some(meta)
@@ -1063,6 +1171,56 @@ mod testes {
 
     /// Link que **é** a mídia (GIF do tenor, print no imgur) é reconhecido pela
     /// extensão; página normal não é.
+    #[test]
+    fn pagina_do_giphy_vira_url_direta() {
+        // Medido: a página do Giphy, para quem não é navegador, entrega
+        // `og:image` = logo da marca. O Post sai da URL direta montada com o
+        // id do fim do slug — sem chave de API e sem abrir navegador.
+        let casos = [
+            (
+                "https://giphy.com/gifs/prison-l0MYt5jPR6QX5pnqM",
+                Some("https://media.giphy.com/media/l0MYt5jPR6QX5pnqM/giphy.gif"),
+            ),
+            (
+                "https://giphy.com/gifs/anything-3o7abKhOpu0NwenH3O?ref=share",
+                Some("https://media.giphy.com/media/3o7abKhOpu0NwenH3O/giphy.gif"),
+            ),
+            (
+                "https://giphy.com/embed/3o7abKhOpu0NwenH3O",
+                Some("https://media.giphy.com/media/3o7abKhOpu0NwenH3O/giphy.gif"),
+            ),
+            // já é a mídia direta: nada a montar
+            ("https://media.giphy.com/media/3o7abKhOpu0NwenH3O/giphy.gif", None),
+            // slug sem id utilizável
+            ("https://giphy.com/gifs/semid", None),
+            // outro site
+            ("https://exemplo.com/gifs/prison-l0MYt5jPR6QX5pnqM", None),
+        ];
+        for (entrada, esperado) in casos {
+            assert_eq!(giphy_direto(entrada).as_deref(), esperado, "{entrada}");
+        }
+    }
+
+    #[test]
+    fn capa_de_video_e_reconhecida() {
+        let mut mp4 = vec![0u8; 24];
+        mp4[4..8].copy_from_slice(b"ftyp");
+        assert!(capa_e_video(&mp4));
+
+        let mut webm = vec![0u8; 24];
+        webm[0..4].copy_from_slice(b"RIFF");
+        webm[8..12].copy_from_slice(b"WEBM");
+        assert!(capa_e_video(&webm));
+
+        // webp começa igual a webm (RIFF), mas não é vídeo
+        let mut webp = vec![0u8; 24];
+        webp[0..4].copy_from_slice(b"RIFF");
+        webp[8..12].copy_from_slice(b"WEBP");
+        assert!(!capa_e_video(&webp));
+        assert!(!capa_e_video(b"GIF89a"));
+        assert!(!capa_e_video(b""));
+    }
+
     #[test]
     fn extensao_de_midia_reconhece_gif_e_video() {
         assert_eq!(extensao_de_midia("https://media.tenor.com/x/gato.gif"), Some("imagem"));

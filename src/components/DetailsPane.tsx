@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { Entry } from "../lib/types";
-import { entryText, ocrDisponivel } from "../api";
+import { entryText, linkWebMeta, ocrDisponivel } from "../api";
 import { displayTitle, fileUrl, formatBytes, mediaUrl, shortPath } from "../lib/format";
 import { FileIcon, FolderIcon } from "../lib/icons";
 import type { T } from "../lib/i18n";
@@ -70,6 +70,10 @@ export function DetailsPane({
   // Capa do link: se o arquivo sumiu (cache limpo, banco restaurado), a imagem
   // quebra e a prévia fica vazia — aí entra o bloco com o ícone do site.
   const [coverOk, setCoverOk] = useState(true);
+  // Uma tentativa por entrada e por sessão: o Chromium escondido custa um
+  // render, então nada de repetir a cada seleção. Só dispara com a entrada
+  // **aberta** aqui no painel e sem capa — nunca em segundo plano.
+  const pedidasWeb = useRef<Set<string>>(new Set());
   // "Nenhum texto" só é verdade quando o Windows tem OCR de verdade; numa
   // máquina sem o componente (VM enxuta) tudo cai como "sem texto".
   const [temOcr, setTemOcr] = useState(true);
@@ -88,6 +92,19 @@ export function DetailsPane({
       : fileUrl(entry.link.imagePath)
     : "";
   useEffect(() => setCoverOk(true), [entry?.id, cover]);
+
+  useEffect(() => {
+    const id = entry?.id;
+    if (!id || entry?.kind !== "link" || cover) return;
+    if (pedidasWeb.current.has(id)) return;
+    // Espera a seleção parar: passar pelas linhas com as setas não deve
+    // disparar um render por linha.
+    const t = window.setTimeout(() => {
+      pedidasWeb.current.add(id);
+      linkWebMeta(id).catch(() => undefined);
+    }, 700);
+    return () => window.clearTimeout(t);
+  }, [entry?.id, entry?.kind, cover]);
   // Rede de segurança: clicar fora da imagem sai do modo zoom (senão o scroll
   // das outras partes do painel ficaria preso no zoom).
   const shotRef = useRef<HTMLDivElement | null>(null);
@@ -242,13 +259,30 @@ export function DetailsPane({
       {entry.kind === "link" && (
         <div className="link-card">
           {cover && coverOk ? (
-            <img
-              className="link-cover"
-              src={cover}
-              alt=""
-              draggable={false}
-              onError={() => setCoverOk(false)}
-            />
+            entry.link?.coverVideo ? (
+              // Página de GIF que entrega o loop em mp4/webm: toca mudo e em
+              // repetição — é o que o Discord faz, e um mp4 de 2 MB toca sem o
+              // custo de decodificar 20 MB de GIF.
+              <video
+                className="link-cover"
+                key={cover}
+                src={cover}
+                autoPlay
+                muted
+                loop
+                playsInline
+                aria-hidden
+                onError={() => setCoverOk(false)}
+              />
+            ) : (
+              <img
+                className="link-cover"
+                src={cover}
+                alt=""
+                draggable={false}
+                onError={() => setCoverOk(false)}
+              />
+            )
           ) : (
             // Sem capa (página sem og:image, arquivo de CDN, arquivo apagado):
             // a prévia não pode virar um retângulo vazio — mostra o site.

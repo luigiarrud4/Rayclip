@@ -8,11 +8,11 @@ dele é usado; só o resultado visual e funcional foi reproduzido.
 
 - Pasta do projeto: `C:\Users\Lugia\Projects\rayclip`
 - Stack: **Tauri v2 (Rust) + React + TypeScript + WebView2**
-- Versão atual: **0.1.41**
-- Binário: `src-tauri/target/release/rayclip.exe` (11.064.320 B, SHA256
-  `c13e3d03edfd4a4f9a9f4d5b8ef21a3fc6f5cab105abcd0e935037b1ecf3dd89`)
-- Instalador: `src-tauri/target/release/bundle/nsis/Rayclip_0.1.41_x64-setup.exe`
-  (3.797.154 B)
+- Versão atual: **0.1.43**
+- Binário: `src-tauri/target/release/rayclip.exe` (11.124.224 B, SHA256
+  `98f1bee09e8eed7594c16f8dfa3b5f93253329a8101c0d2f6b76459c16109823`)
+- Instalador: `src-tauri/target/release/bundle/nsis/Rayclip_0.1.43_x64-setup.exe`
+  (3.813.837 B)
 
 Este documento explica **o que o app faz, como é feito por dentro e como cada
 problema difícil foi resolvido** (com a medição usada para provar).
@@ -837,6 +837,96 @@ legível em disco; clique seleciona / duplo clique cola; `Backspace` na busca n�
 apaga nada.
 
 Tabela completa de mais de 30 testes com resultados: ver `README.md`.
+### 8.57 GIF de link que não carregava: teto que truncava e site atrás do Cloudflare (v0.1.43)
+
+O usuário mandou um print: um link do **klipy.com** abria o cartão sem prévia.
+Investigando, eram **três** defeitos diferentes no mesmo caminho.
+
+#### 1. A capa era gravada pela metade (o "GIF quebrado")
+
+O download da capa de página usava `http_get(&img_url, 900_000)` e o `read_to_end`
+**truncava em silêncio**: um GIF de 2 MB virava 900 KB de arquivo pela metade,
+guardado como se estivesse bom. O navegador mostrava um GIF parado, um quadro
+solto ou nada — dependendo de onde o corte caiu. Como GIF de Klipy/Tenor tem
+2–20 MB, "alguns" GIFs quebravam e outros não: era o tamanho.
+
+Correção: teto próprio `CAPA_MAX` (12 MB), download inteiro e, se bater no teto,
+a capa é **recusada** — meia imagem é pior que imagem nenhuma. Medido com um
+GIF de 2.792.189 B: arquivo no disco com exatamente 2.792.189 B e 370x208 na
+tela (`_ref/teste_gif_grande.py` → `RESULTADO: OK`).
+
+#### 2. Página do Giphy entrega o logo para quem não é navegador
+
+`giphy.com/gifs/<slug>-<ID>` foi testado com UA e cabeçalhos de navegação:
+`og:image` = `https://giphy.com/static/img/giphy-be-animated-logo.gif`, o logo
+de 517x517 da marca — nunca o Post. A URL direta, porém, responde 200
+`image/gif` sem chave: `media.giphy.com/media/<ID>/giphy.gif`.
+
+Correção: `giphy_direto()` monta essa URL a partir do id no fim do slug (cobre
+`/gifs/`, `/embed/` e id sozinho) e entra como **primeira** candidata. Testes
+`pagina_do_giphy_vira_url_direta`.
+
+#### 3. klipy.com responde 403 "Just a moment…" (Cloudflare)
+
+Medido: `curl` com UA do Chrome 131 + `Accept`/`Accept-Language`/`Sec-Fetch-*`
+→ **403**, título `Just a moment…`, `challenge-platform` no corpo. O HTML nem
+tem `og:image`: a página é montada no cliente. Nenhum cliente Rust passa; só um
+Chromium de verdade. Foi por isso que quem integra Klipy (Fluxer, Stoat/Revolt)
+adotou a API deles por slug — que exige chave (`docs.klipy.com`, 100 req/h em
+modo de teste).
+
+Escolha do usuário: **navegador escondido, só sob demanda**.
+
+- `src-tauri/src/webmeta.rs`: cria uma janela WebView2 **invisível**
+  (`visible(false)`, sem taskbar, sem moldura), injeta um script que lê
+  `og:video`/`og:image` (e, em página montada no cliente, o maior `<img>`
+  gif/webp e o primeiro `<video>`) e devolve as URLs navegando para
+  `http://rayclip.localhost/webmeta/<base64url>`. A volta é por navegação porque
+  a página é de **outro domínio**: `fetch` morre no CORS e o IPC do Tauri não é
+  injetado em origem remota.
+- **Só quando o link está aberto**: `DetailsPane` chama `link_web_meta` com
+  espera de 700 ms (passar pelas linhas com as setas não dispara nada), uma vez
+  por entrada por sessão, e o Rust recusa se a entrada já tem capa, se uma
+  janela está aberta, ou se **Offline & private** está ligado. Nada em segundo
+  plano.
+- Capa em **vídeo**: página de GIF entrega o loop em `mp4`/`webm`. `og:video`
+  passou a ser candidato (antes do gif quando a página é animada), o cartão toca
+  `<video autoplay muted loop playsinline>` e a rota `/cover/<hash>` serve
+  `video/mp4`/`video/webm` (o sniff agora reconhece `ftyp` e `RIFF…WEBM`). É o
+  mesmo que o Discord faz: um mp4 de 1,5 MB no lugar de 20 MB de GIF.
+
+**Duas armadilhas medidas:**
+
+1. Criar um WebView2 **fora da thread principal** devolve
+   `HRESULT(0x8007139F)` (`ERROR_INVALID_STATE`) e nenhuma janela nasce. A
+   criação foi para `app.run_on_main_thread`, com o resultado devolvido por
+   canal; a espera continua na thread de trabalho.
+2. `additional_browser_args` **diferente** entre a primeira e a segunda janela
+   quebra do mesmo jeito (tauri#11144) — e o app tem argumentos extras quando
+   `RAYCLIP_CDP` está ligado. `args_webview2()` guarda os argumentos em vigor e a
+   janela escondida repete os mesmos. Medido: 4 variantes de janela falhavam
+   antes, 2 funcionam depois.
+
+#### Medições
+
+| Caso | Resultado |
+|---|---|
+| GIF de 2,7 MB por página do Giphy | 2.792.189 B no disco, 370x208 na tela |
+| `klipy.com/gifs/prison-29` (debug, sem CDP) | capa de vídeo em ~3,0 s |
+| `klipy.com/gifs/lamar-chop` (debug, sem CDP) | 2 candidatas → capa de vídeo em 2,7 s |
+| Instalado 0.1.43, **sem CDP**, navegando com as setas | `webmeta: capa de … (video)` |
+
+`cargo test --lib` → **61/61** (2 novos: `pagina_do_giphy_vira_url_direta`,
+`capa_de_video_e_reconhecida`). `cargo clippy --all-targets` → 0 avisos.
+`npx tsc --noEmit` → 0.
+
+#### Log no build de release (`RAYCLIP_LOG`)
+
+Diagnosticar isso no build otimizado era impossível: `log()` sai do binário em
+release (`cfg!(debug_assertions)`), e foi justamente no instalado que o sintoma
+apareceu. Agora `RAYCLIP_LOG=1` liga o log **nesta execução** (mesmo padrão do
+`RAYCLIP_CDP`, nada muda por padrão): sem a variável, o release continua mudo.
+
 ### 8.56 Espaço com a prévia aberta, hover desligado, vídeo e GIF de link (v0.1.41)
 
 Quatro pedidos que vieram do uso.

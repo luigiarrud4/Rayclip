@@ -42,6 +42,9 @@ export const clearEntries = (keepPinned = true) =>
 export const ocrPending = () => invoke<number>("ocr_pending");
 export const linkPending = () => invoke<number>("link_pending");
 export const linkEntry = (id: string) => invoke<boolean>("link_entry", { id });
+/** Metadados por navegador de verdade (janela escondida). Só para links
+ *  sem capa, e só quando a entrada está aberta na tela. */
+export const linkWebMeta = (id: string) => invoke<boolean>("link_web_meta", { id });
 export const thumbEntry = (id: string) => invoke<void>("thumb_entry", { id });
 export const ocrEntry = (id: string) => invoke<void>("ocr_entry", { id });
 export const copyOcrText = (id: string) => invoke<void>("copy_ocr_text", { id });

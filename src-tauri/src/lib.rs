@@ -13,6 +13,7 @@ mod store;
 mod sysinteg;
 mod thumbs;
 mod update;
+mod webmeta;
 mod win32;
 
 use clipboard_win::Setter;
@@ -1172,6 +1173,78 @@ fn run_link_for(app: AppHandle, id: String, forcar: bool) {
         log(&format!("link: metadados de {url}"));
         notify_changed(&app);
     });
+}
+
+/// Metadados de uma página que **só um navegador de verdade** lê.
+///
+/// Chamado pela interface quando o usuário abre uma entrada de link que ficou
+/// sem capa (klipy.com e afins respondem 403 "Just a moment…" a qualquer outro
+/// cliente). Roda numa thread: abre o WebView2 invisível, pega as URLs e baixa
+/// a capa. Devolve `true` se começou.
+#[tauri::command]
+fn link_web_meta(app: AppHandle, state: State<AppState>, id: String) -> Result<bool, String> {
+    let (url, precisa, media) = {
+        let store = lock_store(&state.store);
+        let Some(e) = store.get(&id) else {
+            return Err("entry not found".into());
+        };
+        let link = e.link.as_ref();
+        let url = link
+            .and_then(|l| l.url.clone())
+            .or_else(|| e.text.clone())
+            .unwrap_or_default();
+        let permissao = url.starts_with("http://") || url.starts_with("https://");
+        // Só vale a pena quando falta a capa (título ruim sozinho não paga o
+        // custo de um render).
+        let falta_capa = link.map(|l| l.image_path.is_none()).unwrap_or(true);
+        (url, permissao && falta_capa, store.media_dir())
+    };
+    if !precisa || url.is_empty() {
+        return Ok(false);
+    }
+    {
+        let cfg = state.settings.lock().unwrap_or_else(|e| e.into_inner());
+        // "Offline & private": nenhuma requisição automática, nem esta.
+        if cfg.offline_mode {
+            return Ok(false);
+        }
+    }
+    if webmeta::ocupado() {
+        return Ok(false);
+    }
+    std::thread::spawn(move || {
+        let Some(candidatas) = webmeta::buscar(&app, &url) else {
+            log(&format!("webmeta: nada em {url}"));
+            return;
+        };
+        log(&format!(
+            "webmeta: {} candidata(s) de {url}",
+            candidatas.len()
+        ));
+        let Some((capa, video)) = linkmeta::baixar_capa(&media, &url, &candidatas) else {
+            log(&format!("webmeta: nenhuma capa baixou de {url}"));
+            return;
+        };
+        let state = app.state::<AppState>();
+        {
+            let mut store = lock_store(&state.store);
+            let mut pronto: Option<Entry> = None;
+            for e in store.entries.iter_mut().filter(|e| e.id == id) {
+                if let Some(l) = e.link.as_mut() {
+                    l.image_path = Some(capa.clone());
+                    l.cover_video = video;
+                    l.fetch_v = Some(linkmeta::FETCH_VERSION);
+                    l.tried = true;
+                    pronto = Some(e.clone());
+                }
+            }
+            let Some(e) = pronto else { return };
+            store.touch(&e);
+        }
+        log(&format!("webmeta: capa de {url} ({})", if video { "video" } else { "imagem" }));
+        notify_changed(&app);
+    });
+    Ok(true)
 }
 
 /// Quantos links ainda não têm metadados (indexa os antigos ao abrir).
@@ -2697,7 +2770,11 @@ fn round_corners(win: &tauri::WebviewWindow) {
 }
 
 pub fn log(msg: &str) {
-    if !cfg!(debug_assertions) {
+    // Build de release não escreve log por padrão. `RAYCLIP_LOG=1` liga **nesta
+    // execução** (mesmo espírito do `RAYCLIP_CDP`): é o que permite diagnosticar
+    // um problema que só aparece no build otimizado, sem mandar um binário de
+    // depuração para quem está com o app instalado.
+    if !cfg!(debug_assertions) && std::env::var_os("RAYCLIP_LOG").is_none() {
         return;
     }
     use std::io::Write;
@@ -3273,6 +3350,19 @@ fn cdp_pedida() -> Option<u16> {
 ///
 /// Os argumentos logo abaixo são os mesmos que o wry usaria por padrão; passar
 /// `additional_browser_args` **substitui** esse padrão, não acrescenta.
+/// Argumentos de navegador em vigor nesta execução.
+///
+/// O WebView2 cria o ambiente **uma vez** por processo, com os `additional_browser_args`
+/// da primeira janela. Criar outra janela com argumentos diferentes devolve
+/// `HRESULT(0x8007139F)` (`ERROR_INVALID_STATE`) e a janela não nasce — é o
+/// bug tauri#11144. Quem cria janela extra (a de metadados, `webmeta.rs`) tem de
+/// repetir exatamente estes argumentos.
+static ARGS_WEBVIEW2: Mutex<Option<String>> = Mutex::new(None);
+
+pub fn args_webview2() -> Option<String> {
+    ARGS_WEBVIEW2.lock().unwrap_or_else(|e| e.into_inner()).clone()
+}
+
 fn aplicar_cdp(contexto: &mut tauri::Context) {
     let Some(porta) = cdp_pedida() else {
         return;
@@ -3285,6 +3375,7 @@ fn aplicar_cdp(contexto: &mut tauri::Context) {
     for janela in contexto.config_mut().app.windows.iter_mut() {
         janela.additional_browser_args = Some(args.clone());
     }
+    *ARGS_WEBVIEW2.lock().unwrap_or_else(|e| e.into_inner()) = Some(args.clone());
     log(&format!("cdp: ligado em 127.0.0.1:{porta} (RAYCLIP_CDP)"));
 }
 
@@ -3344,6 +3435,16 @@ pub fn run() {
             // do asset protocol do Tauri, que daria à interface acesso a
             // qualquer arquivo do disco. O nome é validado e só esta pasta é
             // servida.
+            // Janela escondida devolvendo as URLs de mídia da página
+            // (ver `webmeta.rs`): a página é de outro domínio, então a volta
+            // vem por navegação para cá, não por IPC.
+            if kind == "webmeta" {
+                webmeta::receber(id);
+                return Response::builder()
+                    .status(StatusCode::NO_CONTENT)
+                    .body(Vec::new())
+                    .unwrap_or_else(|_| Response::new(Vec::new()));
+            }
             if kind == "src" {
                 // O `id` chega sem o `.png` (o handler tira o sufixo de todas as
                 // rotas), então o nome do arquivo é remontado aqui.
@@ -3396,6 +3497,13 @@ pub fn run() {
                             "image/jpeg"
                         } else if b.starts_with(b"GIF8") {
                             "image/gif"
+                        } else if linkmeta::capa_e_video(b) {
+                            // Capa que é o loop mp4/webm de uma página de GIF.
+                            if b.len() > 12 && &b[8..12] == b"WEBM" {
+                                "video/webm"
+                            } else {
+                                "video/mp4"
+                            }
                         } else if b.starts_with(b"RIFF") {
                             "image/webp"
                         } else {
@@ -3556,6 +3664,7 @@ pub fn run() {
             compact_db,
             ocr_pending,
             link_pending,
+            link_web_meta,
             link_entry,
             thumb_entry,
             ocr_entry,

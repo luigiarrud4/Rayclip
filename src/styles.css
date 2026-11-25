@@ -841,6 +841,11 @@ body {
   max-height: 168px;
   object-fit: cover;
 }
+/* Capa que é o loop mp4/webm da página de GIF: fundo preto para o primeiro
+   quadro não piscar branco enquanto o vídeo carrega. */
+video.link-cover {
+  background: #000;
+}
 .link-card-body {
   padding: 10px 12px 11px;
   display: flex;

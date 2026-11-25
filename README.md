@@ -513,6 +513,21 @@ copiou, então se o gerenciador não publicar o marcador o conteúdo entra no
 histórico dele. A decisão fica nossa, de propósito, e o interruptor "Also capture
 passwords & protected content" desliga o filtro quando você quiser.
 
+### Novidades da v0.1.43 — GIFs de link que não apareciam
+
+- **Três defeitos no mesmo caminho**, todos medidos: a capa era baixada com teto
+  de 900 KB e gravada **truncada** (GIF de 2 MB virava meia imagem quebrada);
+  a página do Giphy entrega o **logo da marca** no `og:image` para quem não é
+  navegador (agora a URL direta sai do id do slug); e `klipy.com` responde **403
+  do Cloudflare** para qualquer cliente que não seja Chromium.
+- Para o último caso, o app abre um **Chromium invisível** — **só quando você
+  abre aquela entrada de link** e ela está sem capa, uma vez por sessão. Nada em
+  segundo plano, e desligado com *Offline & private*.
+- Página de GIF que entrega **mp4/webm** agora toca em `<video>` mudo e em loop
+  (1,5 MB em vez de 20 MB de GIF), como o Discord.
+- `RAYCLIP_LOG=1` liga o log no build de release, para diagnosticar sem
+  reinstalar um binário de depuração.
+
 ### Novidades da v0.1.41 — vídeo, GIF de link e a busca travada na prévia
 
 - **Vídeo e áudio tocam no painel de detalhes**, com barra de controles e **mudo
