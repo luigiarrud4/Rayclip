@@ -2,10 +2,10 @@
 
 Estado no momento em que este plano foi escrito:
 
-- versão publicada: **v0.1.38** (https://github.com/luigiarrud4/Rayclip/releases/tag/v0.1.38)
-- código-fonte empacotado em `rayclip-projeto.zip` (sha256 `70fada2e…`), sem `target/`,
-  sem `node_modules`, sem a flag de CDP;
-- `cargo test --lib`: **43/43**; `npx tsc --noEmit`: 0 erros.
+- versão publicada: **v0.1.39** (<https://github.com/luigiarrud4/Rayclip/releases/tag/v0.1.39>)
+- instalador 3.791.598 B, `rayclip.exe` 11.049.984 B, sha256 `8e80fdbf…`
+- `cargo test --lib`: **47/47**; `npx tsc --noEmit`: 0 erros;
+- CDP não precisa mais de flag no `tauri.conf.json`: `RAYCLIP_CDP=1` (§8.51).
 
 ---
 
@@ -247,3 +247,27 @@ pasta do Explorer cria o arquivo com o **nome e a extensão certos**, em menos d
 2. Confirmar que é uma **VM descartável** (posso instalar Rust/Node/Python e
    reiniciar).
 3. Se possível, uma segunda resolução de tela/monitor para o item 4.3.
+
+---
+
+## 7. Situação em 24/11 (fim do dia) — o que já está fechado
+
+- **Arrasto para fora**: resolvido por `tauri-plugin-drag` (§8.50 e §8.53).
+  Medido nesta máquina com `.exe` de 25.752.442 B → arquivo idêntico na pasta;
+  na VM, até **120 MB**. GIF, imagem e texto conferidos pelo usuário.
+- **Temas**: 0 textos abaixo de 3.0 de contraste nos 5 esquemas (§8.49).
+- **Moldura nativa**: removida por `DWMWA_NCRENDERING_POLICY` (§8.49c).
+- **Nome de arquivo em hora local** e **OCR honesto** (§8.52).
+- **DevTools sob demanda** (§8.51) — acabou o passo de tirar a flag do build.
+- Release **v0.1.39** publicada (exe + sha256 + instalador).
+
+### Ainda em aberto
+
+1. **OCR de verdade**: esta máquina não tem o componente
+   (`Windows.Media.Ocr.dll` ausente do `System32`). Só mede em Windows reparado.
+2. **Elevação/UAC, autostart, `Win+V`, multi-monitor, Mica sem transparência**:
+   continuam sem medição (§4.3).
+3. **Moldura nativa num Windows onde ela reaparece** (falta a segunda máquina).
+4. **Discord**: soltar texto vira arquivo anexado — limitação do app deles.
+5. **Multi-seleção + colar arquivos** (`CF_HDROP` com N caminhos): viabilidade
+   discutida; se for feito, entra como v0.1.40 com teste próprio.

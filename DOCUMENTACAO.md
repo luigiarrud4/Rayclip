@@ -8,10 +8,12 @@ dele é usado; só o resultado visual e funcional foi reproduzido.
 
 - Pasta do projeto: `C:\Users\Lugia\Projects\rayclip`
 - Stack: **Tauri v2 (Rust) + React + TypeScript + WebView2**
-- Versão atual: **0.1.16**
-- Binário: `src-tauri/target/release/rayclip.exe`
-- Instalador: `src-tauri/target/release/bundle/nsis/Rayclip_0.1.16_x64-setup.exe`
-  (3.709.170 B, SHA256 `8843b55643b6dd48dfb8f5048040d819d84539464e085da3bccc462116a18580`)
+- Versão atual: **0.1.39** (publicada em
+  <https://github.com/luigiarrud4/Rayclip/releases/tag/v0.1.39>)
+- Binário: `src-tauri/target/release/rayclip.exe` (11.049.984 B, SHA256
+  `8e80fdbf932c1e354286312ce7a0896665e14ed3b6f89044258b0448474c65be`)
+- Instalador: `src-tauri/target/release/bundle/nsis/Rayclip_0.1.39_x64-setup.exe`
+  (3.791.598 B)
 
 Este documento explica **o que o app faz, como é feito por dentro e como cada
 problema difícil foi resolvido** (com a medição usada para provar).
@@ -836,6 +838,67 @@ legível em disco; clique seleciona / duplo clique cola; `Backspace` na busca n�
 apaga nada.
 
 Tabela completa de mais de 30 testes com resultados: ver `README.md`.
+### 8.53 Arrasto grande fechado, verificado e publicado (v0.1.39)
+
+Fecho do ciclo do §8.50. A solução que ficou **não** é OLE à mão: é o crate
+`tauri-plugin-drag` (`@crabnebula/tauri-plugin-drag` no frontend +
+`tauri-plugin-drag` no Rust, capability `drag:default`).
+
+#### Como o arrasto escolhe o caminho
+
+| Entrada | Caminho do arrasto |
+| --- | --- |
+| arquivo no disco (`paths` não vazio) | **OLE/`CF_HDROP`** com o caminho original |
+| texto que **é** um caminho de arquivo | o arquivo (caminho), não o texto |
+| imagem/GIF que só existe no banco cifrado | materializada uma vez em `<dados>/drag/<id>.<ext>` e arrastada por caminho |
+| texto, link, cor | `DownloadURL` do Chromium + `text/plain` (`blob:`, nunca `data:`) |
+
+Decisões que custaram medição e não devem ser desfeitas:
+
+- a linha que é **arquivo** não recebe o `draggable` do Chromium: dois arrastos
+  ao mesmo tempo (o do navegador e o do sistema) travavam a janela;
+- o gesto do sistema começa no `pointermove` com limiar de **4 px** (clique que
+  treme continua clique) e é decidido pelo **tipo da entrada**, de forma
+  síncrona — depender de o caminho já ter vindo no hover fazia o gesto rápido
+  cair no caminho do Chromium, que é o que falha acima de ~3 MB;
+- caminho de rede (`\\servidor\...`) é recusado: é o bug aberto drag-rs #72 e
+  derruba o processo;
+- `_arrastando`/`ARRASTANDO` impedem a janela de esconder e a lista de
+  re-renderizar durante o gesto, com rede de segurança de 60 s (`fim()`), senão a
+  janela pararia de esconder para sempre.
+
+#### Medições desta máquina (24/11, v0.1.39)
+
+- `.exe` de **25.752.442 B** arrastado para uma pasta do Explorer: arquivo criado
+  com nome e extensão certos, **25.752.442 B** (`_ref/teste_arrasto.py` →
+  `RESULTADO: OK`). Na VM do teste, medido até **120 MB**.
+- `_ref/teste_pos_arrasto.py` (regressões depois do gesto): janela continua
+  visível, o clique seguinte ainda seleciona (id esperado = id selecionado) e
+  `Alt+Space` volta a esconder/mostrar — `RESULTADO: OK`.
+- `cargo test --lib`: **47/47** (4 testes novos: caminho local, arquivo sumido,
+  recusa de rede, e o payload de texto).
+- `npx tsc --noEmit`: 0 erros.
+- Release instalada em silêncio (`/S`): `FileVersion` **0.1.39**, porta **9222
+  fechada** com o app aberto.
+- Confirmado pelo usuário em uso real: arrasto de arquivo grande, GIF, imagem e
+  texto, temas nos 5 esquemas e Preferências — "tudo funciona".
+
+#### DevTools sob demanda (§8.51) muda a rotina de teste
+
+`RAYCLIP_CDP=1` (ou o número da porta) liga o CDP **só naquela execução**, pela
+configuração em memória, e o `tauri.conf.json` fica sem `additionalBrowserArgs`.
+Consequência prática: **não existe mais** o passo "tirar a flag antes do release";
+o build de teste e o de release são o mesmo arquivo. `_ref/cdp_env.py` monta esse
+ambiente e `_ref/reiniciar.ps1 -Cdp` já sobe o app do jeito certo.
+
+#### Lixo de teste que ficou no disco
+
+- `C:\Users\Lugia\Downloads\AstralRinth App_0.22.0_x64-setup (1).txt` — 25 MB,
+  é o `.exe` com nome errado, criado pelo bug do v0.1.37 (pode apagar).
+- entradas de teste no histórico (`teste_3mb.zip`, `teste_25mb.zip`,
+  `TESTE ARRASTO TEXTO 987654`) e arquivos do `%TEMP%` (`teste_*mb.zip`,
+  `alvo_arrasto/`) — apagar com `Delete` na lista.
+
 ### 8.52 Dois defeitos que o print mostrou: hora do nome e OCR (v0.1.39)
 
 O print da janela tinha duas informações que não fechavam: a imagem estava listada
