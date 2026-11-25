@@ -283,3 +283,9 @@ pasta do Explorer cria o arquivo com o **nome e a extensão certos**, em menos d
    capa na tela. Na VM vale conferir três coisas: (a) o desafio do Cloudflare
    passa dentro de uma janela invisível (aqui passou); (b) o custo (~2,5–3 s)
    numa máquina sem GPU; (c) a janela extra não aparece no Alt+Tab/taskbar.
+9. **Barra de título clássica (v0.1.45)**: era o defeito que só aparecia fora
+   daqui. Na VM vale duas coisas: (a) abrir o app **no logon** (autostart), que é
+   quando o DWM pode ainda não estar compondo, e confirmar que nenhuma barra
+   aparece — `_ref/teste_moldura.py` mede isso pelo atributo do DWM;
+   (b) arrastar a borda da janela para confirmar que o resize continua, porque
+   foi justamente o que a primeira tentativa de correção quebrou.
