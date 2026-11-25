@@ -149,6 +149,13 @@ export function DetailsPane({
   }
 
   const isText = ["text", "link", "email"].includes(entry.kind);
+  // Vídeo/áudio só toca se a entrada ainda aponta para um arquivo do disco
+  // (a URL `rayclip://video/<id>` é resolvida no Rust a partir do banco).
+  const MIDIA = /\.(mp4|m4v|mov|webm|mkv|avi|ogv|mp3|wav|flac|m4a|aac|ogg|oga)$/i;
+  const temMidia =
+    (entry.kind === "video" || entry.kind === "audio") &&
+    entry.paths.length > 0 &&
+    MIDIA.test(entry.paths[0]);
   const text = fullText ?? entry.text ?? "";
   const color = entry.kind === "color" ? entry.text?.trim() ?? "" : "";
 
@@ -190,6 +197,39 @@ export function DetailsPane({
             alt=""
             draggable={false}
           />
+        </div>
+      )}
+
+      {temMidia && (
+        <div className="preview preview-media">
+          {entry.kind === "video" ? (
+            <video
+              key={entry.id}
+              className="media-player"
+              // `preload="metadata"`: mostra a primeira imagem e a duração sem
+              // baixar o arquivo inteiro. `muted` porque abrir uma entrada não
+              // é pedido para tocar som no meio do trabalho.
+              preload="metadata"
+              controls
+              muted
+              playsInline
+              controlsList="nodownload"
+              poster={entry.hasThumb ? mediaUrl("thumb", entry.id, entry.createdAt) : undefined}
+              src={mediaUrl("video", entry.id, entry.createdAt)}
+            >
+              <span className="media-falhou">{t("This format cannot be played here")}</span>
+            </video>
+          ) : (
+            <audio
+              key={entry.id}
+              className="media-player audio"
+              preload="metadata"
+              controls
+              muted
+              src={mediaUrl("audio", entry.id, entry.createdAt)}
+            />
+          )}
+          <span className="media-hint">{t("Muted by default")}</span>
         </div>
       )}
 

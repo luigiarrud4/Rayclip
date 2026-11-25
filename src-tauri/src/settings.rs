@@ -4,6 +4,9 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+/// Versão atual do arquivo de configuração (ver `Settings::migrate`).
+const SCHEMA: u32 = 1;
+
 /// Atalhos usados dentro da janela (não globais). Formato: "Ctrl+K".
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -92,6 +95,8 @@ pub struct Settings {
     /// 100% offline: não faz nenhuma requisição de rede (links ficam sem capa).
     pub offline_mode: bool,
     /// Mostrar o conteúdo da entrada ao passar o mouse (sem clicar).
+    /// Padrão **desligado**: a lista "pulando" sozinha a cada passada do mouse
+    /// atrapalha mais do que ajuda; quem gosta liga nas Preferências.
     pub hover_preview: bool,
     /// Tema pronto: "dark", "light", "midnight", "nord", "rose".
     pub theme: String,
@@ -106,6 +111,10 @@ pub struct Settings {
     /// Procurar atualização sozinho (15 s depois de abrir e a cada 6 h).
     /// Nunca baixa sozinho: só avisa.
     pub auto_update_check: bool,
+    /// Versão do arquivo de configuração. Serve para **mudar um padrão** em
+    /// quem já tem o arquivo salvo: sem isto, `hover_preview: true` gravado
+    /// numa versão antiga continuaria valendo para sempre.
+    pub schema: u32,
 }
 
 impl Default for Settings {
@@ -124,13 +133,14 @@ impl Default for Settings {
             link_previews: true,
             launch_at_login: false,
             offline_mode: false,
-            hover_preview: true,
+            hover_preview: false,
             theme: "dark".into(),
             accent: "#4FA3F8".into(),
             translucent: true,
             in_app_keys: InAppKeys::default(),
             language: "en".into(),
             auto_update_check: true,
+            schema: SCHEMA,
         }
     }
 }
@@ -139,6 +149,11 @@ impl Settings {
     /// Corrige atalhos antigos salvos (o Backspace apagava entradas enquanto o
     /// usuário apagava o texto da busca).
     fn migrate(&mut self) {
+        // v1 (0.1.41): "preview on hover" passou a nascer desligado.
+        if self.schema < 1 {
+            self.hover_preview = false;
+            self.schema = 1;
+        }
         if self
             .in_app_keys
             .delete

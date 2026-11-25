@@ -8,11 +8,11 @@ dele é usado; só o resultado visual e funcional foi reproduzido.
 
 - Pasta do projeto: `C:\Users\Lugia\Projects\rayclip`
 - Stack: **Tauri v2 (Rust) + React + TypeScript + WebView2**
-- Versão atual: **0.1.40**
-- Binário: `src-tauri/target/release/rayclip.exe` (11.055.616 B, SHA256
-  `f239d4221766fef44d524d1970a478bbfae4c23a443a25ef9b3d1a65937b9a99`)
-- Instalador: `src-tauri/target/release/bundle/nsis/Rayclip_0.1.40_x64-setup.exe`
-  (3.793.105 B)
+- Versão atual: **0.1.41**
+- Binário: `src-tauri/target/release/rayclip.exe` (11.064.320 B, SHA256
+  `c13e3d03edfd4a4f9a9f4d5b8ef21a3fc6f5cab105abcd0e935037b1ecf3dd89`)
+- Instalador: `src-tauri/target/release/bundle/nsis/Rayclip_0.1.41_x64-setup.exe`
+  (3.797.154 B)
 
 Este documento explica **o que o app faz, como é feito por dentro e como cada
 problema difícil foi resolvido** (com a medição usada para provar).
@@ -837,6 +837,87 @@ legível em disco; clique seleciona / duplo clique cola; `Backspace` na busca n�
 apaga nada.
 
 Tabela completa de mais de 30 testes com resultados: ver `README.md`.
+### 8.56 Espaço com a prévia aberta, hover desligado, vídeo e GIF de link (v0.1.41)
+
+Quatro pedidos que vieram do uso.
+
+#### 1. Com a prévia (Quick Look) na tela, a busca não digita mais
+
+Era o campo de busca que continuava com o foco por baixo da imagem: as letras
+(em especial o **Espaço**) entravam no filtro, e a lista mudava atrás da prévia.
+Duas travas juntas:
+
+- `NavBar` recebe `locked` e o `<input>` fica `readOnly` enquanto a prévia está
+  aberta (corta a digitação, sem perder o texto que já estava lá);
+- ao abrir (`Espaço`, `⤢` ou clique no painel) o app faz `inputRef.blur()`.
+
+O `Espaço`/`Esc` continuam fechando a prévia: o handler do `ImageViewer` já roda
+em fase de captura com `stopImmediatePropagation`, então não chega ao app.
+Medido: com a prévia aberta, `a b c` não altera o filtro ('' e `readOnly=true`) e
+`Espaço` fecha.
+
+#### 2. "Preview on hover" passou a nascer desligado
+
+Padrão trocado para `false` e, para quem já tem `settings.json` gravado, uma
+migração de esquema desliga **uma vez** (`schema: 1`); depois disso o valor salvo
+manda — quem gosta liga nas Preferências e fica ligado.
+
+Motivo de existir `schema`: com `#[serde(default)]`, mudar o `Default` do struct
+não muda o arquivo de quem já instalou. Medido: mover o mouse por três linhas
+diferentes não muda mais a linha selecionada.
+
+#### 3. Vídeo (e áudio) toca dentro do app
+
+- **Rota `rayclip://video/<id>`** no protocolo próprio, com **Range**: o
+  elemento de mídia do Chromium pede pedaços (`bytes=0-`, `bytes=1000-`, sufixo
+  `bytes=-N`) para tocar, buscar posição e saber a duração. `resposta_midia()`
+  responde `206` + `Content-Range`; sem `Range` devolve o começo como parcial
+  (arquivo grande não vira 300 MB de memória). Range impossível → `416` com o
+  tamanho real; extensão que não é mídia → `415`.
+- **O caminho vem do banco**, nunca da URL: a rota só serve o `paths[0]` da
+  entrada pedida, então a interface não ganha acesso a arquivo nenhum do disco.
+- **Volume**: `muted` de propósito — abrir uma entrada não é pedido para tocar
+  som; a barra do player tem o botão de volume, com a dica "Muted by default".
+- `preload="metadata"` + poster da miniatura: mostra o primeiro quadro e a
+  duração sem baixar o arquivo todo.
+- CSP ganhou `media-src 'self' blob: http://rayclip.localhost` (sem isso o
+  `<video>` cai no `default-src` e não carrega nada).
+
+Medido com um `.mp4` de 240x480, 6,62 s: player presente, `muted=true`,
+`currentTime` avançou para 1,15 s tocando de verdade.
+
+#### 4. Link que **é** um GIF aparece animado (tipo Discord)
+
+Antes, link direto de mídia (`https://media.giphy.com/....gif`) caía no ramo
+"não é HTML" do `linkmeta` e saía só com host + favicon. Agora:
+
+- `extensao_de_midia()` reconhece `.gif`/`.webp`/`.png`/`.jpg`/`.avif` (e
+  `.mp4`/`.webm`/`.mov`, ainda sem player remoto) na URL;
+- o `Content-Type` confirma e os bytes são baixados com o mesmo cliente
+  anti-SSRF (teto de **8 MB**, `MIDIA_MAX`);
+- os bytes vão **crus** para `media/covers/<hash>` e são servidos por
+  `rayclip://cover/<hash>` — é por não reencodar que o GIF continua animado;
+- capas de `og:image` passam pelo mesmo `guarda_capa()`, então GIF de página
+  também anima.
+
+Medido: link do giphy → capa de 715.492 B, magic `GIF8`, 480x270 na tela.
+
+#### Testes
+
+`cargo test --lib` → **59/59** (6 novos: mime por extensão, range normal,
+sufixo, sem range, 416, 415; mais `extensao_de_midia`). `cargo clippy
+--all-targets` → 0 avisos. E2E `_ref/teste_midia.py` no build **instalado**
+0.1.41 → `RESULTADO: OK`.
+
+#### De quebra: o app não subia
+
+Durante os testes o app passou a "achar" que já havia outra instância e morria
+sem janela. Causa: `CreateMutexW` **só seta** o último erro quando o mutex já
+existe; quando cria um novo, o erro anterior continua lá — e `create_dir_all`
+de uma pasta existente deixa `ERROR_ALREADY_EXISTS` (183). `already_running()`
+agora faz `SetLastError(0)` antes. Sem isso, a gravação de configuração (nova,
+por causa do `schema`) podia fazer o app não abrir.
+
 ### 8.54 Colar vários arquivos de uma vez (v0.1.40)
 
 Multi-seleção já existia, mas só para **texto**: `paste_many` copia um item,

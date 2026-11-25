@@ -41,6 +41,35 @@ pub struct LinkMeta {
 /// `http://192.168.0.1/admin` (ou `http://localhost:8080`) faria o app bater
 /// dentro da rede local: o classico SSRF. So passa **http/https** para um host
 /// que resolva **exclusivamente** para enderecos publicos.
+/// Teto para capa de **mídia direta** (GIF de tenor/giphy costuma ter 1–8 MB;
+/// og:image de página fica nos 900 KB de antes).
+const MIDIA_MAX: usize = 8 * 1024 * 1024;
+
+/// Guarda os bytes da capa em `media/covers/<hash da URL>` e devolve a URL do
+/// protocolo próprio. Bytes **crus**: um GIF animado continua animado (é o que
+/// faz o link colado aparecer se mexendo, como no Discord).
+fn guarda_capa(media: &std::path::Path, img_url: &str, bytes: &[u8]) -> Option<String> {
+    let key = cover_key(img_url)?;
+    let dir = media.join("covers");
+    std::fs::create_dir_all(&dir).ok()?;
+    std::fs::write(dir.join(&key), bytes).ok()?;
+    Some(format!("http://rayclip.localhost/cover/{key}"))
+}
+
+/// A URL é um arquivo de mídia direto (`.gif`, `.webp`, `.png`, `.mp4`…)?
+///
+/// Link colado que **é** a mídia, não uma página: um `.../gato.gif` do tenor.
+/// A extensão é o sinal barato; o `Content-Type` confirma depois.
+fn extensao_de_midia(url: &str) -> Option<&'static str> {
+    let sem_query = url.split(['?', '#']).next().unwrap_or(url);
+    let ext = sem_query.rsplit('.').next()?.to_lowercase();
+    match ext.as_str() {
+        "gif" | "webp" | "png" | "jpg" | "jpeg" | "avif" => Some("imagem"),
+        "mp4" | "webm" | "mov" => Some("video"),
+        _ => None,
+    }
+}
+
 pub fn url_permitida(url: &str) -> bool {
     let Some((esquema, resto)) = url.split_once("://") else {
         return false;
@@ -920,14 +949,30 @@ pub fn fetch(url: &str, media: &std::path::Path) -> Option<LinkMeta> {
     // baixar centenas de KB nem de procurar <meta>. Só host + favicon do site.
     let ct = head_ct(&url).unwrap_or_default();
     if !ct.is_empty() && !is_html(&ct) {
-        return Some(LinkMeta {
+        let mut meta = LinkMeta {
             url: Some(url.clone()),
             site_name: Some(host_of(&url)),
             icon: resolve_icon(media, &url, None),
             tried: true,
             fetch_v: Some(FETCH_VERSION),
             ..Default::default()
-        });
+        };
+        // Link colado que **é** a mídia (tenor/giphy/IMGUR direto): baixa e
+        // guarda como capa. É o "só mandar o link e o GIF aparece" do Discord —
+        // e como os bytes vão crus para o disco, o GIF anima na tela.
+        let parece_imagem = ct.starts_with("image/") || extensao_de_midia(&url) == Some("imagem");
+        if parece_imagem && !url_permitida(&url) {
+            return Some(meta);
+        }
+        if parece_imagem {
+            if let Some((ct2, bytes)) = http_get(&url, MIDIA_MAX) {
+                let conhecida = sniff_ext(&bytes, &ct2).is_some();
+                if conhecida {
+                    meta.image_path = guarda_capa(media, &url, &bytes);
+                }
+            }
+        }
+        return Some(meta);
     }
 
     let (ctype, body): (String, Vec<u8>) = page_html(&url, 2_500_000)?;
@@ -1003,13 +1048,8 @@ pub fn fetch(url: &str, media: &std::path::Path) -> Option<LinkMeta> {
         }
         // Guarda em disco e serve por URL: um data URL de capa (até 900 KB)
         // entraria na listagem inteira, a cada abertura.
-        let Some(key) = cover_key(&img_url) else {
-            continue;
-        };
-        let dir = media.join("covers");
-        let _ = std::fs::create_dir_all(&dir);
-        if std::fs::write(dir.join(&key), &bytes).is_ok() {
-            meta.image_path = Some(format!("http://rayclip.localhost/cover/{key}"));
+        if let Some(url_capa) = guarda_capa(media, &img_url, &bytes) {
+            meta.image_path = Some(url_capa);
             break;
         }
     }
@@ -1020,6 +1060,20 @@ pub fn fetch(url: &str, media: &std::path::Path) -> Option<LinkMeta> {
 #[cfg(test)]
 mod testes {
     use super::*;
+
+    /// Link que **é** a mídia (GIF do tenor, print no imgur) é reconhecido pela
+    /// extensão; página normal não é.
+    #[test]
+    fn extensao_de_midia_reconhece_gif_e_video() {
+        assert_eq!(extensao_de_midia("https://media.tenor.com/x/gato.gif"), Some("imagem"));
+        assert_eq!(
+            extensao_de_midia("https://i.imgur.com/abc.PNG?size=large"),
+            Some("imagem")
+        );
+        assert_eq!(extensao_de_midia("https://cdn.x/v.mp4"), Some("video"));
+        assert_eq!(extensao_de_midia("https://exemplo.com/artigo"), None);
+        assert_eq!(extensao_de_midia("https://exemplo.com/a.b/c"), None);
+    }
 
     #[test]
     fn attr_aceita_espaco_ao_redor_do_igual() {

@@ -37,6 +37,7 @@ export function NavBar({
   onFilter,
   onBack,
   inputRef,
+  locked = false,
   t,
 }: {
   query: string;
@@ -45,6 +46,8 @@ export function NavBar({
   onFilter: (f: FilterId) => void;
   onBack: () => void;
   inputRef: React.RefObject<HTMLInputElement | null>;
+  /** Prévia (Quick Look) aberta: a busca não aceita tecla nenhuma. */
+  locked?: boolean;
   t: T;
 }) {
   const [open, setOpen] = useState(false);
@@ -97,6 +100,12 @@ export function NavBar({
           placeholder={t("Type to filter entries…")}
           spellCheck={false}
           autoComplete="off"
+          // Com a prévia aberta o campo fica travado: era por aqui que o
+          // "Espaço" e as letras continuavam entrando enquanto a imagem estava
+          // na tela (o `readOnly` corta a digitação, o handler global da prévia
+          // trata Espaço/Esc).
+          readOnly={locked}
+          aria-readonly={locked}
         />
       </div>
       <div className="filter" ref={wrapRef}>

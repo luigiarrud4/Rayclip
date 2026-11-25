@@ -705,10 +705,17 @@ const ERROR_ALREADY_EXISTS: u32 = 183;
 /// Single-instance guard: only one process may own the clipboard history store.
 pub fn already_running() -> bool {
     unsafe {
+        use windows_sys::Win32::Foundation::SetLastError;
         let name: Vec<u16> = r"Local\RayclipSingletonV1"
             .encode_utf16()
             .chain(std::iter::once(0))
             .collect();
+        // `CreateMutexW` só **seta** o último erro quando o mutex já existia;
+        // quando cria um novo, o erro anterior continua lá. `create_dir_all` de
+        // uma pasta que já existe deixa `ERROR_ALREADY_EXISTS` (183) — e o app
+        // então "achava" que havia outra instância, sinalizava e morria sem
+        // janela nenhuma. Zerar o erro antes é obrigatório.
+        SetLastError(0);
         let h = CreateMutexW(std::ptr::null(), 0, name.as_ptr());
         if h.is_null() {
             return false;

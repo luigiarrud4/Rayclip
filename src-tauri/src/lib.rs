@@ -2485,6 +2485,128 @@ fn reveal_path(path: String) {
 /// Abre link no navegador. Aceita **apenas** http/https/mailto: o conteúdo vem
 /// da área de transferência (não confiável) e antes ia para `cmd /C start`, que
 /// interpretava `&`, `|`, `%VAR%` etc. como comando.
+/// Tipo de conteúdo de um arquivo de mídia pela extensão. `None` = não é
+/// vídeo/áudio conhecido (a rota responde 415 em vez de servir bytes).
+fn mime_de_midia(p: &std::path::Path) -> Option<&'static str> {
+    let ext = p
+        .extension()
+        .map(|e| e.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+    Some(match ext.as_str() {
+        "mp4" | "m4v" => "video/mp4",
+        "mov" => "video/quicktime",
+        "webm" => "video/webm",
+        "mkv" => "video/x-matroska",
+        "avi" => "video/x-msvideo",
+        "ogv" => "video/ogg",
+        "mp3" => "audio/mpeg",
+        "wav" => "audio/wav",
+        "flac" => "audio/flac",
+        "m4a" => "audio/mp4",
+        "aac" => "audio/aac",
+        "ogg" | "oga" => "audio/ogg",
+        _ => return None,
+    })
+}
+
+/// Resposta para `<video>`/`<audio>`: **um pedaço** do arquivo por requisição.
+///
+/// O elemento de mídia do Chromium pede `Range` para tocar, buscar posição e
+/// saber a duração; responder o arquivo inteiro de uma vez faz um vídeo de
+/// 300 MB virar 300 MB de memória do app. Sem `Range`, devolve o começo como
+/// parcial (`206` + `Content-Range`) — é legal e informa o tamanho real, então
+/// o player pede o resto.
+fn resposta_midia(p: &std::path::Path, range: Option<&str>) -> tauri::http::Response<Vec<u8>> {
+    use std::io::{Read, Seek, SeekFrom};
+    use tauri::http::{Response, StatusCode};
+
+    const PEDACO: u64 = 8 * 1024 * 1024;
+
+    let Some(mime) = mime_de_midia(p) else {
+        return Response::builder()
+            .status(StatusCode::UNSUPPORTED_MEDIA_TYPE)
+            .body(Vec::new())
+            .unwrap_or_else(|_| Response::new(Vec::new()));
+    };
+    let Ok(meta) = std::fs::metadata(p) else {
+        return Response::builder()
+            .status(StatusCode::NOT_FOUND)
+            .body(Vec::new())
+            .unwrap_or_else(|_| Response::new(Vec::new()));
+    };
+    let total = meta.len();
+    if total == 0 {
+        return Response::builder()
+            .status(StatusCode::NO_CONTENT)
+            .body(Vec::new())
+            .unwrap_or_else(|_| Response::new(Vec::new()));
+    }
+
+    // "bytes=ini-fim" | "bytes=ini-" | "bytes=-tamanho"
+    let mut ini = 0u64;
+    let mut fim = total - 1;
+    let mut parcial = false;
+    if let Some(r) = range {
+        if let Some(resto) = r.trim().strip_prefix("bytes=") {
+            let mut partes = resto.splitn(2, '-');
+            let a = partes.next().unwrap_or("").trim().to_string();
+            let b = partes.next().unwrap_or("").trim().to_string();
+            if a.is_empty() && !b.is_empty() {
+                // sufixo: últimos N bytes
+                let n: u64 = b.parse().unwrap_or(0);
+                ini = total.saturating_sub(n);
+            } else {
+                ini = a.parse().unwrap_or(0);
+                if !b.is_empty() {
+                    fim = b.parse().unwrap_or(total - 1).min(total - 1);
+                }
+            }
+            if ini > fim {
+                return Response::builder()
+                    .status(StatusCode::RANGE_NOT_SATISFIABLE)
+                    .header("Content-Range", format!("bytes */{total}"))
+                    .body(Vec::new())
+                    .unwrap_or_else(|_| Response::new(Vec::new()));
+            }
+            parcial = true;
+        }
+    } else if total > PEDACO {
+        // Sem Range num arquivo grande: entrega o primeiro pedaço como parcial.
+        fim = PEDACO - 1;
+        parcial = true;
+    }
+
+    let quer = fim - ini + 1;
+    let mut buf = vec![0u8; quer as usize];
+    let lidos = (|| -> Option<usize> {
+        let mut f = std::fs::File::open(p).ok()?;
+        f.seek(SeekFrom::Start(ini)).ok()?;
+        let mut lido = 0usize;
+        while lido < buf.len() {
+            match f.read(&mut buf[lido..]) {
+                Ok(0) => break,
+                Ok(n) => lido += n,
+                Err(_) => return None,
+            }
+        }
+        Some(lido)
+    })()
+    .unwrap_or(0);
+    buf.truncate(lidos);
+
+    let mut b = Response::builder()
+        .header("Content-Type", mime)
+        .header("Accept-Ranges", "bytes")
+        .header("Cache-Control", "no-store");
+    b = if parcial {
+        b.status(StatusCode::PARTIAL_CONTENT)
+            .header("Content-Range", format!("bytes {ini}-{fim}/{total}"))
+    } else {
+        b.status(StatusCode::OK)
+    };
+    b.body(buf).unwrap_or_else(|_| Response::new(Vec::new()))
+}
+
 #[tauri::command]
 fn open_url(url: String) -> Result<(), String> {
     let u = url.trim();
@@ -3293,6 +3415,30 @@ pub fn run() {
                         .unwrap_or_else(|_| Response::new(Vec::new())),
                 };
             }
+            // Vídeo/áudio do histórico: serve o arquivo **do disco** com Range.
+            // O caminho é lido do banco a partir do id (a URL nunca carrega
+            // caminho), e só sai daqui o que é vídeo/áudio conhecido.
+            if kind == "video" || kind == "audio" {
+                let caminho = {
+                    let state = ctx.app_handle().state::<AppState>();
+                    let store = lock_store(&state.store);
+                    store
+                        .get(id)
+                        .and_then(|e| e.paths.first().map(std::path::PathBuf::from))
+                };
+                let range = request
+                    .headers()
+                    .get("range")
+                    .and_then(|v| v.to_str().ok())
+                    .map(|v| v.to_string());
+                return match caminho {
+                    Some(p) => resposta_midia(&p, range.as_deref()),
+                    None => Response::builder()
+                        .status(StatusCode::NOT_FOUND)
+                        .body(Vec::new())
+                        .unwrap_or_else(|_| Response::new(Vec::new())),
+                };
+            }
             // Favicon por host: arquivo em `media/fav/<host>` (não é conteúdo
             // do clipboard, é ícone derivado — igual ao ícone do app de origem).
             if kind == "fav" {
@@ -3823,6 +3969,77 @@ mod arrasto {
             .to_string_lossy()
             .to_string()];
         assert!(arquivos_da_entrada(&e, None, &std::env::temp_dir(), "t3").is_err());
+    }
+
+    /// Mime por extensão: é o que decide se a rota serve ou responde 415.
+    #[test]
+    fn mime_de_midia_conhece_video_e_audio() {
+        use std::path::Path;
+        assert_eq!(mime_de_midia(Path::new("a.MP4")), Some("video/mp4"));
+        assert_eq!(mime_de_midia(Path::new("b.webm")), Some("video/webm"));
+        assert_eq!(mime_de_midia(Path::new("c.m4a")), Some("audio/mp4"));
+        assert_eq!(mime_de_midia(Path::new("d.txt")), None);
+        assert_eq!(mime_de_midia(Path::new("sem_extensao")), None);
+    }
+
+    fn arquivo_de_teste(nome: &str, tamanho: usize) -> std::path::PathBuf {
+        let p = std::env::temp_dir().join(nome);
+        let bytes: Vec<u8> = (0..tamanho).map(|i| (i % 251) as u8).collect();
+        std::fs::write(&p, &bytes).unwrap();
+        p
+    }
+
+    /// `Range: bytes=10-19` devolve 206 com o pedaço e o tamanho total — é o
+    /// que o `<video>` usa para tocar e buscar posição.
+    #[test]
+    fn range_de_video_devolve_pedaco() {
+        let f = arquivo_de_teste("rayclip-range.mp4", 100);
+        let r = resposta_midia(&f, Some("bytes=10-19"));
+        assert_eq!(r.status(), 206);
+        assert_eq!(r.headers().get("content-range").unwrap(), "bytes 10-19/100");
+        assert_eq!(r.body().len(), 10);
+        assert_eq!(r.body()[0], 10);
+        let _ = std::fs::remove_file(&f);
+    }
+
+    /// Sufixo (`bytes=-5`) = últimos N bytes.
+    #[test]
+    fn range_de_sufixo_pega_o_final() {
+        let f = arquivo_de_teste("rayclip-sufixo.mp4", 100);
+        let r = resposta_midia(&f, Some("bytes=-5"));
+        assert_eq!(r.status(), 206);
+        assert_eq!(r.headers().get("content-range").unwrap(), "bytes 95-99/100");
+        assert_eq!(r.body().len(), 5);
+        let _ = std::fs::remove_file(&f);
+    }
+
+    /// Sem Range: 200 com o arquivo inteiro (arquivo pequeno).
+    #[test]
+    fn sem_range_devolve_arquivo_inteiro() {
+        let f = arquivo_de_teste("rayclip-inteiro.mp4", 100);
+        let r = resposta_midia(&f, None);
+        assert_eq!(r.status(), 200);
+        assert_eq!(r.body().len(), 100);
+        assert_eq!(r.headers().get("accept-ranges").unwrap(), "bytes");
+        let _ = std::fs::remove_file(&f);
+    }
+
+    /// Range impossível responde 416 com o tamanho real (o player recua).
+    #[test]
+    fn range_invalido_responde_416() {
+        let f = arquivo_de_teste("rayclip-416.mp4", 100);
+        let r = resposta_midia(&f, Some("bytes=500-600"));
+        assert_eq!(r.status(), 416);
+        assert_eq!(r.headers().get("content-range").unwrap(), "bytes */100");
+        let _ = std::fs::remove_file(&f);
+    }
+
+    /// Extensão que não é mídia: 415, para a rota não servir qualquer arquivo.
+    #[test]
+    fn arquivo_que_nao_e_midia_responde_415() {
+        let f = arquivo_de_teste("rayclip-texto.txt", 10);
+        assert_eq!(resposta_midia(&f, None).status(), 415);
+        let _ = std::fs::remove_file(&f);
     }
 
     /// Entry mínimo para os testes (o resto dos campos tem `default`).

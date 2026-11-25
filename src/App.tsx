@@ -1125,6 +1125,10 @@ export default function App() {
         // continua sendo espaço no campo de filtro.
         e.preventDefault();
         setZoomArmed(false);
+        // Solta o foco da busca **antes** de abrir: com o campo focado, as
+        // teclas seguintes (inclusive Espaço) continuariam entrando no filtro
+        // por cima da imagem.
+        inputRef.current?.blur();
         setViewerEntry(selected);
       } else if (matchAccel(e, K.actions)) {
         e.preventDefault();
@@ -1235,6 +1239,7 @@ export default function App() {
         onFilter={setFilter}
         onBack={() => void api.hideWindow()}
         inputRef={inputRef}
+        locked={!!viewerEntry}
         t={t}
       />
       <div className="body">

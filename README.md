@@ -513,6 +513,20 @@ copiou, então se o gerenciador não publicar o marcador o conteúdo entra no
 histórico dele. A decisão fica nossa, de propósito, e o interruptor "Also capture
 passwords & protected content" desliga o filtro quando você quiser.
 
+### Novidades da v0.1.41 — vídeo, GIF de link e a busca travada na prévia
+
+- **Vídeo e áudio tocam no painel de detalhes**, com barra de controles e **mudo
+  por padrão**. O arquivo é servido com `Range` (o player pede pedaços, busca
+  posição, sabe a duração) e o caminho vem do banco — a interface não ganha
+  acesso a arquivo nenhum do disco.
+- **Link que é um GIF aparece animado**: colar `https://media.giphy.com/....gif`
+  baixa os bytes, guarda crus (por isso anima) e mostra a prévia — como o Discord
+  faz. Serve para PNG/JPG/WEBP também.
+- **Com a prévia aberta, a busca não digita mais**: o campo fica travado e perde
+  o foco; `Espaço`/`Esc` fecham a prévia.
+- **"Preview on hover" agora nasce desligado** (quem gosta liga nas
+  Preferências).
+
 ### Novidades da v0.1.40 — colar vários arquivos de uma vez
 
 Marcar três itens e apertar `Enter` colava um de cada vez. Se os três eram

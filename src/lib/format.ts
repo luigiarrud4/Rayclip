@@ -20,7 +20,11 @@ export const fileUrl = (path?: string | null) => {
  * `http://rayclip.localhost/img/<id>`. `v` só serve para o navegador não
  * reaproveitar a versão antiga quando a entrada muda.
  */
-export const mediaUrl = (kind: "img" | "thumb", id: string, v?: number | string) =>
+export const mediaUrl = (
+  kind: "img" | "thumb" | "video" | "audio",
+  id: string,
+  v?: number | string
+) =>
   `http://rayclip.localhost/${kind}/${id}${v ? `?v=${v}` : ""}`;
 
 /** Compatibilidade: caminho local vai pelo asset protocol. */
