@@ -269,5 +269,11 @@ pasta do Explorer cria o arquivo com o **nome e a extensão certos**, em menos d
    continuam sem medição (§4.3).
 3. **Moldura nativa num Windows onde ela reaparece** (falta a segunda máquina).
 4. **Discord**: soltar texto vira arquivo anexado — limitação do app deles.
-5. **Multi-seleção + colar arquivos** (`CF_HDROP` com N caminhos): viabilidade
-   discutida; se for feito, entra como v0.1.40 com teste próprio.
+5. ~~Multi-seleção + colar arquivos~~ — feito na v0.1.40 (`CF_HDROP` com N
+   caminhos), medido com `_ref/teste_colar_arquivos.py`.
+6. **Vídeo dentro do app (v0.1.41)**: depende dos codecs do WebView2/Media
+   Foundation. `.mp4` H.264 toca aqui; numa VM enxuta (Windows sem o *Media
+   Feature Pack*) pode aparecer só o erro do `<video>` — vale medir no Windows
+   limpo, junto com o item 1.
+7. **GIF de link (v0.1.41)**: precisa de rede para baixar a capa (teto de 8 MB);
+   com **Offline & private** ligado a capa não vem, de propósito.
