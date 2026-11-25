@@ -513,6 +513,23 @@ copiou, então se o gerenciador não publicar o marcador o conteúdo entra no
 histórico dele. A decisão fica nossa, de propósito, e o interruptor "Also capture
 passwords & protected content" desliga o filtro quando você quiser.
 
+### Novidades da v0.1.46 — a barra de título "presa" e o fundo do seu jeito
+
+- Na VM, a barra de título clássica **desaparecia ao maximizar e restaurar**: a
+  faixa era pintada uma vez (o `WM_NCCALCSIZE` do `CreateWindowExW` chega antes de
+  o estado do `tao` estar pronto) e ninguém recalculava a área não-cliente depois.
+  Medido numa janela de brinquedo: faixa de **39 px** que continua **39 px**
+  mesmo trocando o comportamento, e vai a **0 px** com
+  `SetWindowPos(SWP_FRAMECHANGED)` — exatamente o que o maximizar fazia à mão.
+- O app agora pede esse recálculo **sozinho**: depois de criar, a cada vez que
+  aparece, em toda ativação e quando o DWM/tema/estilo mudam (no máximo uma
+  reafirmação enfileirada por vez).
+- **Cor do fundo** e **transparência** (0–65%) nas Preferências → Aparência: oito
+  chips + campo `#RRGGBB` e um slider. Sem seletor nativo de cor de propósito —
+  ele abre um diálogo do Windows e a janela se esconde ao perder o foco.
+- A cor é validada no Rust (`#RRGGBB` ou "a do tema") e a opacidade fica presa
+  entre 35% e 100%: não existe ajuste que deixe o app invisível sem volta.
+
 ### Novidades da v0.1.45 — a barra de título que aparecia em alguns PCs
 
 - Em máquinas onde o DWM não estava compondo quando o app abriu, o Windows

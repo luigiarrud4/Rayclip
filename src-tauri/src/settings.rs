@@ -104,6 +104,10 @@ pub struct Settings {
     pub accent: String,
     /// Fundo translúcido (Mica do Windows 11) — dá para ver o que está atrás.
     pub translucent: bool,
+    /// Cor de fundo escolhida à mão (`#RRGGBB`). Vazio = a do tema.
+    pub bg_color: String,
+    /// Opacidade do fundo da janela: 1.0 = sólido, 0.35 = quase transparente.
+    pub bg_opacity: f64,
     /// Atalhos internos configuráveis.
     pub in_app_keys: InAppKeys,
     /// Idioma da interface: "en" (padrão) ou "pt-BR".
@@ -137,6 +141,8 @@ impl Default for Settings {
             theme: "dark".into(),
             accent: "#4FA3F8".into(),
             translucent: true,
+            bg_color: String::new(),
+            bg_opacity: 1.0,
             in_app_keys: InAppKeys::default(),
             language: "en".into(),
             auto_update_check: true,
@@ -148,6 +154,22 @@ impl Default for Settings {
 impl Settings {
     /// Corrige atalhos antigos salvos (o Backspace apagava entradas enquanto o
     /// usuário apagava o texto da busca).
+    /// Normaliza o que veio do arquivo/da interface: cor só em `#RRGGBB` (ou
+    /// vazio, que significa "a do tema") e opacidade presa entre 35% e 100% —
+    /// abaixo disso o app ficaria ilegível e não há como voltar pela interface.
+    pub fn sane(&mut self) {
+        let cor = self.bg_color.trim().to_string();
+        let valida = cor.is_empty()
+            || (cor.len() == 7
+                && cor.starts_with('#')
+                && cor[1..].chars().all(|c| c.is_ascii_hexdigit()));
+        self.bg_color = if valida { cor } else { String::new() };
+        if !self.bg_opacity.is_finite() {
+            self.bg_opacity = 1.0;
+        }
+        self.bg_opacity = self.bg_opacity.clamp(0.35, 1.0);
+    }
+
     fn migrate(&mut self) {
         // v1 (0.1.41): "preview on hover" passou a nascer desligado.
         if self.schema < 1 {
@@ -221,6 +243,10 @@ impl Settings {
         if !LANGS.contains(&self.language.as_str()) {
             self.language = def.language;
         }
+        // Cor/opacidade do fundo: o saneamento vale tanto para o arquivo quanto
+        // para o que chega da interface (o slider não pode entregar 0.0 e deixar
+        // o app invisível sem caminho de volta).
+        self.sane();
         self
     }
 }
@@ -236,6 +262,25 @@ mod testes {
         assert_eq!(k.clear_all, "Ctrl+Shift+Delete");
         assert!(!k.delete.to_lowercase().contains("backspace"));
         assert!(!k.clear_all.to_lowercase().contains("backspace"));
+    }
+
+    #[test]
+    fn fundo_personalizado_e_saneado() {
+        let mut cfg = Settings::default();
+        assert_eq!(cfg.bg_color, "");
+        assert!((cfg.bg_opacity - 1.0).abs() < f64::EPSILON);
+        cfg.bg_color = "  #1a1a1a ".into();
+        cfg.bg_opacity = 0.0;
+        cfg = cfg.sanitized();
+        assert_eq!(cfg.bg_color, "#1a1a1a");
+        assert!((cfg.bg_opacity - 0.35).abs() < f64::EPSILON);
+        // cor inválida volta para "a do tema" em vez de quebrar o CSS
+        let mut ruim = Settings::default();
+        ruim.bg_color = "red; background: url(x)".into();
+        ruim.bg_opacity = 9.0;
+        let ruim = ruim.sanitized();
+        assert_eq!(ruim.bg_color, "");
+        assert!((ruim.bg_opacity - 1.0).abs() < f64::EPSILON);
     }
 
     #[test]

@@ -473,22 +473,82 @@ unsafe extern "system" fn moldura_proc(
     _data: usize,
 ) -> isize {
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        WM_DWMCOMPOSITIONCHANGED, WM_NCPAINT, WM_STYLECHANGED, WM_THEMECHANGED,
+        WM_DWMCOMPOSITIONCHANGED, WM_NCACTIVATE, WM_NCPAINT, WM_STYLECHANGED, WM_THEMECHANGED,
     };
     match msg {
         WM_NCPAINT => 0,
-        // Reafirma em segundo plano: chamar `DwmSetWindowAttribute` dentro do
-        // callback de mudança de estilo é pedir recursão.
+        // Ativação é quando o `DefWindowProc` repinta a moldura. Deixa o tao
+        // fazer o que ele faz (foco, `MARKER_ACTIVATE`) e pede o recálculo logo
+        // depois: se o tema pintou alguma coisa, ela some no mesmo instante.
+        WM_NCACTIVATE => {
+            let r = DefSubclassProc(hwnd, msg, wp, lp);
+            pede_reafirmar(hwnd);
+            r
+        }
+        // Reafirma em segundo plano: chamar `DwmSetWindowAttribute` ou
+        // `SetWindowPos` dentro do callback de mudança de estilo é pedir
+        // recursão.
         WM_STYLECHANGED | WM_DWMCOMPOSITIONCHANGED | WM_THEMECHANGED => {
-            PostMessageW(hwnd, REAFIRMA_WM, 0, 0);
+            pede_reafirmar(hwnd);
             DefSubclassProc(hwnd, msg, wp, lp)
         }
-        REAFIRMA_WM => politica_dwm(hwnd as isize) as isize,
+        REAFIRMA_WM => {
+            REAFIRMA_PENDENTE.store(false, std::sync::atomic::Ordering::Relaxed);
+            politica_dwm(hwnd as isize);
+            reagir_moldura(hwnd as isize);
+            1
+        }
         _ => DefSubclassProc(hwnd, msg, wp, lp),
     }
 }
 
 static MOLDA_INSTALADA: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
+
+/// Recalcula a área não-cliente da janela **agora**.
+///
+/// É o passo que faltava. A janela nasce com `WS_CAPTION` (é o tao quem monta o
+/// estilo assim) e o `WM_NCCALCSIZE` que chega durante o `CreateWindowExW` pode
+/// cair antes de o estado do tao estar pronto lá dentro — e aí o
+/// `DefWindowProc` reserva a faixa do título e o tema a pinta. Ela ficava
+/// pintada até algo forçar um novo cálculo: era por isso que **maximizar e
+/// restaurar fazia a barra sumir**.
+///
+/// `SWP_FRAMECHANGED` manda o `WM_NCCALCSIZE` de novo, com o estado já pronto
+/// (o tao responde 0 para janela sem moldura) e a faixa é apagada — o mesmo
+/// efeito do maximizar/restaurar, só que automático e sem piscar.
+pub fn reagir_moldura(h: isize) {
+    if h == 0 {
+        return;
+    }
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        SetWindowPos, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOOWNERZORDER, SWP_NOSIZE,
+        SWP_NOZORDER,
+    };
+    unsafe {
+        SetWindowPos(
+            h as HWND,
+            std::ptr::null_mut(),
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_NOACTIVATE
+                | SWP_FRAMECHANGED,
+        );
+    }
+}
+
+static REAFIRMA_PENDENTE: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Pede **uma** reafirmação pendente. Sem isso, cada ativação (que é frequente:
+/// abrir, colar, clicar) enfileraria um `SetWindowPos` por mensagem.
+fn pede_reafirmar(hwnd: HWND) {
+    use std::sync::atomic::Ordering;
+    if !REAFIRMA_PENDENTE.swap(true, Ordering::Relaxed) {
+        unsafe { PostMessageW(hwnd, REAFIRMA_WM, 0, 0) };
+    }
+}
 
 #[link(name = "comctl32")]
 extern "system" {
@@ -513,6 +573,7 @@ pub fn sem_moldura(h: isize) -> i32 {
         return -1;
     }
     let hr = politica_dwm(h);
+    reagir_moldura(h);
     // Uma subclasse por janela: o `AtomicIsize` guarda qual hwnd já tem a sua.
     use std::sync::atomic::Ordering;
     if MOLDA_INSTALADA.load(Ordering::Relaxed) != h {

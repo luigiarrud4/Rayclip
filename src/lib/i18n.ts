@@ -249,6 +249,14 @@ Object.assign(PT, {
   "Accent colour": "Cor de destaque",
   "Selection, highlight and badges": "Seleção, realce e etiquetas",
   "Accent colour hex": "Cor de destaque em hexadecimal",
+  "Background colour": "Cor do fundo",
+  "Colour of the window background, on top of the theme":
+    "Cor do fundo da janela, por cima da do tema",
+  "Background colour hex": "Cor do fundo em hexadecimal",
+  "Background transparency": "Transparência do fundo",
+  "How much of what is behind the window shows through":
+    "Quanto do que está atrás da janela aparece",
+  "Theme default": "Padrão do tema",
   "Translucent window": "Janela translúcida",
   "Mica backdrop: you can see what is behind the window (Windows 11)":
     "Fundo Mica: você vê o que está atrás da janela (Windows 11)",

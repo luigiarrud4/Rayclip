@@ -117,6 +117,10 @@ export interface Settings {
   accent: string;
   /** Fundo translúcido (Mica) — dá para ver o que está atrás da janela. */
   translucent: boolean;
+  /** Cor de fundo escolhida à mão (`#RRGGBB`). Vazio = a do tema. */
+  bgColor: string;
+  /** Opacidade do fundo da janela: 1 = sólido, 0.35 = quase transparente. */
+  bgOpacity: number;
   /** Idioma da interface: "en" (padrão) ou "pt-BR". */
   language: string;
   /** Procurar atualização sozinho (só avisa; nunca instala sozinho). */

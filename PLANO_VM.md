@@ -283,9 +283,20 @@ pasta do Explorer cria o arquivo com o **nome e a extensão certos**, em menos d
    capa na tela. Na VM vale conferir três coisas: (a) o desafio do Cloudflare
    passa dentro de uma janela invisível (aqui passou); (b) o custo (~2,5–3 s)
    numa máquina sem GPU; (c) a janela extra não aparece no Alt+Tab/taskbar.
-9. **Barra de título clássica (v0.1.45)**: era o defeito que só aparecia fora
-   daqui. Na VM vale duas coisas: (a) abrir o app **no logon** (autostart), que é
-   quando o DWM pode ainda não estar compondo, e confirmar que nenhuma barra
-   aparece — `_ref/teste_moldura.py` mede isso pelo atributo do DWM;
+9. **Barra de título clássica (v0.1.45/0.1.46)**: era o defeito que só aparecia
+   fora daqui. Na VM vale duas coisas: (a) abrir o app **no logon** (autostart),
+   que é quando o DWM pode ainda não estar compondo, e confirmar que nenhuma
+   barra aparece — `_ref/teste_moldura.py` mede isso pelo atributo do DWM;
    (b) arrastar a borda da janela para confirmar que o resize continua, porque
    foi justamente o que a primeira tentativa de correção quebrou.
+   Na v0.1.46 entrou o passo que faltava (recálculo da área não-cliente com
+   `SWP_FRAMECHANGED`, §8.60). **Teste novo na VM**: abrir, **maximizar e
+   restaurar** e confirmar que a barra **não aparece em momento nenhum** — era
+   restaurar que a apagava, agora ela já não deve existir. Vale medir a diferença
+   `janela − cliente` (tem de ser 0, em `_ref/teste_faixa_presa.py` o mesmo
+   cálculo na janela de brinquedo).
+10. **Cor e transparência do fundo (v0.1.46)**: escolher uma cor de fundo e
+    transparência de 0% a 65% e confirmar, na VM: (a) o que está atrás aparece
+    (com *Janela translúcida* ligada e desligada); (b) com **efeitos de
+    transparência do Windows desligados** a janela continua legível (é o caso
+    que degrada); (c) a escolha sobrevive ao fechar e abrir.

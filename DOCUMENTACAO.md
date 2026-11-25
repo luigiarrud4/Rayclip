@@ -8,11 +8,11 @@ dele é usado; só o resultado visual e funcional foi reproduzido.
 
 - Pasta do projeto: `C:\Users\Lugia\Projects\rayclip`
 - Stack: **Tauri v2 (Rust) + React + TypeScript + WebView2**
-- Versão atual: **0.1.45**
-- Binário: `src-tauri/target/release/rayclip.exe` (11.124.736 B, SHA256
-  `2b2ebc5920ce94f3bb39c4242e20a3d1b2d6a7b2962f3fb88a47b696778b8b8f`)
-- Instalador: `src-tauri/target/release/bundle/nsis/Rayclip_0.1.45_x64-setup.exe`
-  (3.809.410 B)
+- Versão atual: **0.1.46**
+- Binário: `src-tauri/target/release/rayclip.exe` (11.132.928 B, SHA256
+  `0f1285b4f1b3da06c5d30ea1eba9425ad1bfed30c66a96622d864ce73bac7875`)
+- Instalador: `src-tauri/target/release/bundle/nsis/Rayclip_0.1.46_x64-setup.exe`
+  (3.816.235 B)
 
 Este documento explica **o que o app faz, como é feito por dentro e como cada
 problema difícil foi resolvido** (com a medição usada para provar).
@@ -920,6 +920,113 @@ linha de moldura sobrando.
 
 `cargo test --lib` 61/61 · `cargo clippy --all-targets` 0 avisos · `npx tsc
 --noEmit` 0.
+
+### 8.60 A faixa de título **presa**: o passo que faltava (v0.1.46)
+
+O usuário relatou o mesmo sintoma da §8.59 pela outra ponta: na VM, ao
+**maximizar e restaurar** a janela, a barra de título nativa **desaparecia** —
+ou seja, ela existia antes e o maximizar/restaurar é que a apagava. Isso inverteu
+a leitura do problema: não era um tema desenhando sempre, era uma faixa pintada
+**uma vez** e ninguém recalculando depois.
+
+#### A causa, medida numa janela de brinquedo
+
+`_ref/teste_faixa_presa.py` cria uma janela com o **mesmo** estilo que o tao usa
+(`WS_CAPTION | WS_SYSMENU | WS_THICKFRAME | WS_VISIBLE`) e mede a diferença entre
+a janela e a área cliente — que é exatamente a altura da faixa do título:
+
+| Passo | Faixa no topo |
+|---|---|
+| 1. criada com `WS_CAPTION` | **39 px** |
+| 2. trocada para "sem moldura" (`WM_NCCALCSIZE` → 0) **sem** forçar recálculo | **39 px** (presa) |
+| 3. depois de `SetWindowPos(..., SWP_FRAMECHANGED)` | **0 px** |
+
+O passo 2 é o bug inteiro: mudar o comportamento do `WM_NCCALCSIZE` **não**
+recalcula nada. A área não-cliente só é recalculada quando alguém pede — e no
+app quem pedia era o **maximizar/restaurar** do usuário (o `tao` reaplica estilos
+com `SWP_FRAMECHANGED`, `window_state.rs`). Por isso a barra sumia justamente ali.
+
+E por que a faixa chegou a ser pintada? Porque o `WM_NCCALCSIZE` que o Windows
+manda **durante** o `CreateWindowExW` pode chegar antes de o estado do `tao`
+estar pronto para aquela janela; nessa hora o `DefWindowProc` responde com a
+geometria clássica (com faixa), e o DWM/tema pinta. Depois disso, silêncio.
+
+#### O que mudou
+
+`win32.rs` ganhou `reagir_moldura(hwnd)`: um `SetWindowPos` com
+`SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOOWNERZORDER |
+SWP_NOACTIVATE`. É o mesmo pedido de recálculo que o maximizar/restaurar fazia —
+só que automático, e sem mexer no tamanho nem no foco.
+
+Ele roda em três momentos:
+
+1. dentro de `sem_moldura`, que é chamado no `setup` **e** a cada `show_window`
+   (depois de `show()`/`set_always_on_top()`, que reaplicam estilos);
+2. em `WM_NCACTIVATE`, **depois** de deixar o `tao` fazer o trabalho dele (foco,
+   `MARKER_ACTIVATE`) — ativação é quando o `DefWindowProc` repinta a moldura;
+3. na reafirmação pedida por `WM_STYLECHANGED`, `WM_DWMCOMPOSITIONCHANGED` e
+   `WM_THEMECHANGED`.
+
+Para não virar enxurrada (ativação acontece a cada abrir, colar, clicar), existe
+`REAFIRMA_PENDENTE: AtomicBool` + `pede_reafirmar()`: no máximo **uma**
+reafirmação enfileirada por vez.
+
+#### Medido na janela real (build de depuração)
+
+| Momento | janela − cliente (topo, direita) |
+|---|---|
+| aberta | `(0, 0)` |
+| depois de esconder/mostrar | `(0, 0)` |
+| depois de um `WM_NCACTIVATE` | `(0, 0)` |
+
+`DWMWA_NCRENDERING_ENABLED` continua `False`, e arrastar a borda continua
+redimensionando (a alça do sistema não foi tocada).
+
+**Latência de abrir**: não remedida nesta rodada — o passo novo é um
+`SetWindowPos` de tamanho zero, o mesmo tipo de chamada que o `show()` já faz, e
+a medição da v0.1.45 (`_ref/latencia_abrir.py`, mediana 4,7 ms) continua valendo
+como referência.
+
+### 8.61 Cor de fundo e transparência escolhidas pelo usuário (v0.1.46)
+
+Preferências → Aparência ganhou dois controles:
+
+- **Cor do fundo**: oito chips (mais o chip listrado "Padrão do tema") e um campo
+  `#RRGGBB`. Não é `<input type="color">` de propósito: ele abre o seletor
+  nativo do Windows, a janela perde o foco e **se esconde** (é o comportamento
+  normal do app).
+- **Transparência do fundo**: slider de 0% a 65%, em passos de 5. O piso de 65%
+  é o `clamp` do Rust (0.35 de opacidade) — abaixo disso o app fica ilegível e
+  não haveria caminho de volta pela interface.
+
+#### Como chega na tela
+
+`applyTheme` → `aplicarFundo` grava `--window-bg` (a janela) e `--page-bg` (a
+página de Preferências e as listas) **inline** no `<html>`. Inline vence as
+regras de tema e de translucidez, e as duas propriedades são **removidas antes**
+de qualquer leitura e quando o usuário volta ao padrão — senão a cor ficaria
+congelada depois de trocar de tema.
+
+`--page-bg` é token novo (`:root { --page-bg: var(--panel) }`). Os diálogos
+(confirmar, salvar N itens) continuam em `--panel` **opaco** de propósito:
+texto sobre fundo vazado é ilegível.
+
+#### Medições (`_ref/teste_fundo.py`, build de depuração)
+
+| Ação | `--window-bg` / `--page-bg` |
+|---|---|
+| estado inicial | `#0a0a0c` / `#0a0a0c` |
+| `bgColor: #1b1016`, `bgOpacity: 0.65` | `rgb(27 16 22 / 0.65)` / `rgb(10 10 12 / 0.73)` |
+| cor inválida (`red; url(x)`) + `0.1` | `rgb(10 10 12 / 0.35)` / `rgb(10 10 12 / 0.43)` |
+| volta ao padrão | `#0a0a0c` / `#0a0a0c` |
+
+Na interface: `1` chip "Padrão do tema", `1` slider (`max=65`, rótulo em pt-BR),
+clique no chip `#1b1016` gravou `bgColor` no disco; slider em `35` gravou
+`bgOpacity: 0.65` e pintou `rgb(27 16 22 / 0.65)`. Print conferido: os dois
+controles ficam alinhados à direita, como as demais linhas.
+
+`cargo test --lib` **62/62** (novo: `fundo_personalizado_e_saneado`) ·
+`cargo clippy --all-targets` 0 · `npx tsc --noEmit` 0.
 
 ### 8.58 Filtro "Somente vídeos" e a prévia duplicada do vídeo (v0.1.44)
 

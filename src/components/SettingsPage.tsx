@@ -4,7 +4,13 @@ import type { InAppKeys, Settings, UpdateInfo } from "../lib/types";
 import * as api from "../api";
 import { CheckIcon } from "../lib/icons";
 import { Dropdown } from "./Dropdown";
-import { ACCENTS, THEMES, applyTheme, setOsTransparency } from "../lib/theme";
+import {
+  ACCENTS,
+  BACKGROUNDS,
+  THEMES,
+  applyTheme,
+  setOsTransparency,
+} from "../lib/theme";
 import { LANGUAGES, type Lang, type T } from "../lib/i18n";
 import { formatBytes } from "../lib/format";
 
@@ -506,6 +512,64 @@ export function SettingsPage({
                   }}
                   aria-label={t("Accent colour hex")}
                 />
+              </div>
+            </Field>
+            <Field
+              title={t("Background colour")}
+              desc={t("Colour of the window background, on top of the theme")}
+            >
+              <div className="accent-row">
+                <button
+                  type="button"
+                  className="accent-chip accent-chip-theme"
+                  data-active={!cfg.bgColor}
+                  title={t("Theme default")}
+                  aria-label={t("Theme default")}
+                  onClick={() => void update({ bgColor: "" })}
+                />
+                {BACKGROUNDS.map((c) => (
+                  <button
+                    key={c}
+                    type="button"
+                    className="accent-chip"
+                    data-active={cfg.bgColor.toLowerCase() === c}
+                    style={{ background: c }}
+                    title={c}
+                    onClick={() => void update({ bgColor: c })}
+                  />
+                ))}
+                <input
+                  className="accent-hex"
+                  value={cfg.bgColor}
+                  placeholder={t("Theme")}
+                  spellCheck={false}
+                  onChange={(e) => {
+                    const v = e.target.value.trim();
+                    if (v === "" || /^#[0-9a-fA-F]{6}$/.test(v)) void update({ bgColor: v });
+                  }}
+                  aria-label={t("Background colour hex")}
+                />
+              </div>
+            </Field>
+            <Field
+              title={t("Background transparency")}
+              desc={t("How much of what is behind the window shows through")}
+            >
+              <div className="slider-row">
+                <input
+                  type="range"
+                  min={0}
+                  max={65}
+                  step={5}
+                  value={Math.round((1 - cfg.bgOpacity) * 100)}
+                  onChange={(e) =>
+                    void update({ bgOpacity: 1 - Number(e.target.value) / 100 })
+                  }
+                  aria-label={t("Background transparency")}
+                />
+                <span className="slider-value">
+                  {Math.round((1 - cfg.bgOpacity) * 100)}%
+                </span>
               </div>
             </Field>
             <Field
