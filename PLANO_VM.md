@@ -275,5 +275,11 @@ pasta do Explorer cria o arquivo com o **nome e a extensão certos**, em menos d
    Foundation. `.mp4` H.264 toca aqui; numa VM enxuta (Windows sem o *Media
    Feature Pack*) pode aparecer só o erro do `<video>` — vale medir no Windows
    limpo, junto com o item 1.
-7. **GIF de link (v0.1.41)**: precisa de rede para baixar a capa (teto de 8 MB);
-   com **Offline & private** ligado a capa não vem, de propósito.
+7. **GIF de link (v0.1.41/0.1.43)**: precisa de rede para baixar a capa (teto de
+   12 MB, sem truncar); com **Offline & private** ligado a capa não vem, de
+   propósito.
+8. **Chromium escondido (v0.1.43)**: páginas atrás do Cloudflare (klipy.com) são
+   lidas por uma janela WebView2 invisível, aberta só quando a entrada está sem
+   capa na tela. Na VM vale conferir três coisas: (a) o desafio do Cloudflare
+   passa dentro de uma janela invisível (aqui passou); (b) o custo (~2,5–3 s)
+   numa máquina sem GPU; (c) a janela extra não aparece no Alt+Tab/taskbar.
