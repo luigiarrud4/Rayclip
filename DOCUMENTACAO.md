@@ -8,11 +8,11 @@ dele é usado; só o resultado visual e funcional foi reproduzido.
 
 - Pasta do projeto: `C:\Users\Lugia\Projects\rayclip`
 - Stack: **Tauri v2 (Rust) + React + TypeScript + WebView2**
-- Versão atual: **0.1.58**
+- Versão atual: **0.1.59**
 - Binário: `src-tauri/target/release/rayclip.exe` (11.161.088 B, SHA256
-  `f7c9d1c17573c35da348ac73c5cb40ec7672288806f7edb4de5be5d73d03e4eb`)
-- Instalador: `src-tauri/target/release/bundle/nsis/Rayclip_0.1.58_x64-setup.exe`
-  (3.823.636 B)
+  `d449290e04dfb35f84163ebad14684c5a0d822e3f018eb4d25fc9e235dbc201b`)
+- Instalador: `src-tauri/target/release/bundle/nsis/Rayclip_0.1.59_x64-setup.exe`
+  (3.822.149 B)
 
 Este documento explica **o que o app faz, como é feito por dentro e como cada
 problema difícil foi resolvido** (com a medição usada para provar).
@@ -3967,3 +3967,33 @@ no primeiro quadro, o custo não compra nada — ficou fora, com o motivo no có
 
 Se em outra máquina o painel aparecer sólido até a ativação, o caminho é pagar
 esses ~33 ms; é uma troca, não um bug de ordem.
+
+### 8.76 O tooltip "Arraste para mover a janela" ficava na tela (v0.1.59)
+
+Captura `Screenshot_34.png` (210x62, a caixinha do tooltip): *"o app não está aberto
+mas o 'Arraste para mover a janela' aparece mesmo assim; acontece também toda vez
+que o mouse passa pela borda"*.
+
+#### Causa
+
+O `title` que a v0.1.55 colocou no `drag-strip` (para dizer onde arrastar) é
+renderizado pelo **tooltip nativo** do WebView2 — e esse tooltip é uma **janela
+própria** (`tooltips_class32`), filha do processo mas **não** filha da nossa
+janela. Quando a janela esconde ao perder o foco, o tooltip **não** esconde junto.
+
+Pior: com o mouse sobre a faixa de redimensionar (o `WM_NCHITTEST` que devolve
+`HTLEFT`/…), o cursor continua "sobre o elemento", então o tooltip reaparece e
+**fica na tela durante o arrasto**.
+
+#### Correção
+
+`title` removido do `drag-strip` (e a tradução que só ele usava). O puxador
+continua funcionando — é o `data-tauri-drag-region`, não o tooltip.
+
+#### Medido
+
+- `document.querySelector('.drag-strip').getAttribute('title')` → **`null`**.
+- Com o mouse sobre a faixa e depois sobre a borda direita, enumerando as janelas
+  **visíveis do processo do app**: nenhuma `tooltips_class32` (só o
+  `Tao Thread Event Target`, 16x16, que é interno do tao).
+- `check_i18n.py`: 306 usos de `t()`, **0 sem tradução**.

@@ -1215,7 +1215,10 @@ export default function App() {
         if (selected) openActionsFor(selected.id);
       }}
     >
-      <div className="drag-strip" data-tauri-drag-region title={t("Drag to move the window")} />
+      {/* Sem `title`: o tooltip nativo do WebView2 ficava na tela depois que a
+          janela escondia, e reaparecia toda vez que o mouse passava na borda
+          (o `WM_NCHITTEST` da moldura continua valendo com a janela visível). */}
+      <div className="drag-strip" data-tauri-drag-region />
       {settingsOpen ? (
         <SettingsPage
           onClose={() => {

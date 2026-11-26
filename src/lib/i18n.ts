@@ -366,7 +366,6 @@ Object.assign(PT, {
 
 Object.assign(PT, {
   "Clipboard History": "Histórico do clipboard",
-  "Drag to move the window": "Arraste para mover a janela",
   "This format cannot be played here": "Este formato não pode ser reproduzido aqui",
   "Muted by default": "Sem som por padrão",
 });

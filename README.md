@@ -513,6 +513,16 @@ copiou, então se o gerenciador não publicar o marcador o conteúdo entra no
 histórico dele. A decisão fica nossa, de propósito, e o interruptor "Also capture
 passwords & protected content" desliga o filtro quando você quiser.
 
+### Novidades da v0.1.59 — o tooltip do puxador saiu da tela
+
+- O `title` do puxador do topo ("Arraste para mover a janela") é desenhado pelo
+  tooltip **nativo** do WebView2, que é uma janela à parte: ela **não** esconde
+  junto com o app, ficava na tela depois de fechar, e reaparecia sempre que o
+  mouse passava na borda de redimensionar.
+- `title` removido. O puxador continua igual (é o `data-tauri-drag-region`).
+- Medido: `title` = `null` no DOM e **nenhuma** janela `tooltips_class32` do
+  processo com o mouse na faixa ou na borda.
+
 ### Novidades da v0.1.58 — multi-select de imagens colava a mesma duas vezes
 
 - O nome do arquivo materializado em `drag/` era `Rayclip image <data-hora até o
