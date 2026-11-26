@@ -513,6 +513,26 @@ copiou, então se o gerenciador não publicar o marcador o conteúdo entra no
 histórico dele. A decisão fica nossa, de propósito, e o interruptor "Also capture
 passwords & protected content" desliga o filtro quando você quiser.
 
+### Novidades da v0.1.47 — configurações que não travam e translúcido de verdade
+
+- Mexer nas configurações (e no slider de transparência) não trava mais o app.
+  Cada gravação custava **~1,1 s** porque re-registrava os atalhos globais,
+  chamava `schtasks` e `reg` — três processos por clique. Medido: 20 gravações
+  levavam **23,1 s**; agora levam **0,10 s**. O backend aplica só o que mudou e a
+  interface grava com debounce de 220 ms.
+- O translúcido estava fraco porque o app pedia o desfoque **duas vezes** (Mica
+  do DWM **+** véu de 33% do caminho legado) e o CSS ainda punha 72% por cima:
+  sobravam ~19% do efeito. Agora é **um mecanismo só** (acrílico do DWM, que
+  desfoca o que está atrás — o Mica só amostra o papel de parede) e a cor e a
+  transparência vêm do CSS, que é o que você controla.
+- Padrão novo de opacidade: **55%**, com migração (`schema` 2) para não deixar
+  quem já tinha 100% preso no sólido. Medido com fundo branco atrás: luminância
+  **23,6** (sólido) → **51,4** (padrão) → **63,7** (máximo).
+- Conferido que o fundo **desfoca** de verdade: com listras pretas/brancas atrás,
+  o desvio-padrão dentro da janela é **3,4** (listras somem). O caminho legado,
+  que ficou só como plano B, dá **30,4** — listras visíveis, ou seja, era só
+  transparência sem desfoque.
+
 ### Novidades da v0.1.46 — a barra de título "presa" e o fundo do seu jeito
 
 - Na VM, a barra de título clássica **desaparecia ao maximizar e restaurar**: a
