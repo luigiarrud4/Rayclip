@@ -915,33 +915,12 @@ video.link-cover {
 /* ---- barra de arrasto no topo ------------------------------------------- */
 .drag-strip {
   /* A mesma coisa que o rodapé faz: `data-tauri-drag-region` arrasta a janela.
-     A diferença era só o tamanho (16 px invisíveis contra os ~34 px do rodapé
-     com ícone). Aqui ela fica do tamanho de um puxador de verdade e mostra o
-     ícone, então dá para ver onde pegar — e ela cobre a faixa onde o fantasma
-     da legenda ainda podia aparecer. */
+     Ficou com 22 px (era 16) para dar área de pegar com o mouse. **Sem ícone**:
+     o puxador visível do app é o do rodapé, e o usuário pediu para não duplicar
+     — o `title` continua dizendo "Arraste para mover a janela". */
   height: 22px;
   flex-shrink: 0;
   cursor: default;
-  display: flex;
-  align-items: center;
-  padding-left: var(--space-12);
-  color: var(--orange);
-}
-.sr-only {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip-path: inset(50%);
-  white-space: nowrap;
-}
-.drag-strip .glyph {
-  opacity: 0.5;
-  transition: opacity 140ms ease;
-  pointer-events: none;
-}
-.drag-strip:hover .glyph {
-  opacity: 0.9;
 }
 
 /* ---- lista virtualizada -------------------------------------------------- */

@@ -513,6 +513,14 @@ copiou, então se o gerenciador não publicar o marcador o conteúdo entra no
 histórico dele. A decisão fica nossa, de propósito, e o interruptor "Also capture
 passwords & protected content" desliga o filtro quando você quiser.
 
+### Novidades da v0.1.57 — encerrado, e a faixa do topo sem ícone
+
+- **A barra clássica está resolvida** (confirmado pelo usuário na v0.1.56). O que
+  fechou a conta foi o `DefSubclassProc(WM_NCACTIVATE, …, lp = -1)`, junto de tudo
+  da §8.73 no `DOCUMENTACAO.md`.
+- Faixa de arrasto do topo **sem ícone** (o puxador visível é o do rodapé), com
+  22 px de área e `title` traduzido.
+
 ### Novidades da v0.1.56 — a correção do Electron para a "phantom titlebar"
 
 - Pesquisando o mesmo sintoma, achei o defeito **idêntico** já resolvido no

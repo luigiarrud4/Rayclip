@@ -8,11 +8,11 @@ dele é usado; só o resultado visual e funcional foi reproduzido.
 
 - Pasta do projeto: `C:\Users\Lugia\Projects\rayclip`
 - Stack: **Tauri v2 (Rust) + React + TypeScript + WebView2**
-- Versão atual: **0.1.56**
+- Versão atual: **0.1.57**
 - Binário: `src-tauri/target/release/rayclip.exe` (11.160.576 B, SHA256
-  `326b6e2cc1efb3b924fa1c87f5091e27a518df6fe5f54c1ed0465dcf0c7d3857`)
-- Instalador: `src-tauri/target/release/bundle/nsis/Rayclip_0.1.56_x64-setup.exe`
-  (3.823.133 B)
+  `2046bb4f00aad1e5d06ee33c57e08e133753270d8370cfdf1a46452fdc7423c0`)
+- Instalador: `src-tauri/target/release/bundle/nsis/Rayclip_0.1.57_x64-setup.exe`
+  (3.822.338 B)
 
 Este documento explica **o que o app faz, como é feito por dentro e como cada
 problema difícil foi resolvido** (com a medição usada para provar).
@@ -3830,3 +3830,46 @@ que pinta é X". Uso: `python _ref/captura_fantasma.py 8`.
   ajuste, 6 de 6 davam "vermelho" — era falso positivo do detector, corrigido).
 - Esconder ao perder o foco continua funcionando (abrir o Bloco de Notas some com
   a janela), e abre de novo pelo atalho.
+
+### 8.73 ENCERRADO: a barra clássica sumiu — confirmado pelo usuário (v0.1.57)
+
+Depois da v0.1.56 o usuário confirmou: **"está 100% corrigido"**.
+
+Fica registrado o que de fato resolveu, em ordem, porque o caminho importa para
+quem for mexer nisso depois:
+
+1. **v0.1.47** — uma única mecânica de desfoque (DWM acrílico), sem véu extra.
+2. **v0.1.50** — a faixa não-cliente passou a ser **medida** e zerada quando
+   errada (`zera_faixa`: tira `WS_CAPTION`, força o recálculo e devolve o bit).
+3. **v0.1.51** — `DwmExtendFrameIntoClientArea(-1)`, que estendia o vidro pela
+   janela toda, era o que autorizava a pintura da área não-cliente. Margens `0`
+   (o desfoque vem do `DWMWA_SYSTEMBACKDROP_TYPE`, medido).
+4. **v0.1.52** — o app **re-apegava a moldura** em toda abertura
+   (`SWP_FRAMECHANGED`), e todo re-apego pinta 1-3 quadros de legenda. Fora.
+   Junto: `DWMWA_CAPTION_COLOR`/`DWMWA_BORDER_COLOR = COLOR_NONE`,
+   `DWMWA_TRANSITIONS_FORCEDISABLED` e `DwmFlush`.
+5. **v0.1.53** — `WS_CAPTION` sai do estilo **de vez**, e o redimensionamento
+   passa a ser por `WM_NCHITTEST` próprio (bordas de 8 px, cantos de 14 px,
+   cursor de cruz), com `WM_GETMINMAXINFO` para a maximizada respeitar a barra de
+   tarefas.
+6. **v0.1.54** — a ordem estava errada: arrancávamos o bit **antes** do
+   `DefSubclassProc` (que roda o tao, e o tao repõe os estilos). Agora é depois,
+   também dentro do `WM_NCPAINT` e antes do `show()`, **sem** `SWP_FRAMECHANGED`.
+7. **v0.1.56 — o fecho**: `DefSubclassProc(WM_NCACTIVATE, ..., lp = -1)`, a
+   correção do Electron (PR #40749). A MSDN: com `-1`, o `DefWindowProc` **não
+   repinta** a área não-cliente ao ativar/desativar. Era esse repintar que ainda
+   desenhava a barra no primeiro quadro.
+
+#### Faixa de arrasto do topo
+
+Sem ícone (o puxador visível do app é o do rodapé, que já tem o ícone laranja),
+mantendo **22 px** de área para pegar com o mouse e o `title`
+"Arraste para mover a janela". Medido no DOM: altura `22`, sem `svg` dentro, e o
+ícone do rodapé intacto.
+
+#### Instrumento que fica no projeto
+
+`_ref/captura_fantasma.py` — captura a faixa de topo a cada 30 ms numa abertura,
+salva o quadro quando vê banda clara uniforme atravessando a largura e informa
+**qual janela está naquele pixel** (`WindowFromPoint`, classe + pid). Se algum dia
+voltar, o primeiro passo é rodar isso, não supor.

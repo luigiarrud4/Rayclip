@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { Clipboard } from "./lib/icons";
 import { NavBar } from "./components/NavBar";
 import { EntryList, arrastandoAgora } from "./components/EntryList";
 import { DetailsPane } from "./components/DetailsPane";
@@ -1216,10 +1215,7 @@ export default function App() {
         if (selected) openActionsFor(selected.id);
       }}
     >
-      <div className="drag-strip" data-tauri-drag-region title={t("Drag to move the window")}>
-        <Clipboard size={12} />
-        <span className="sr-only">{t("Drag to move the window")}</span>
-      </div>
+      <div className="drag-strip" data-tauri-drag-region title={t("Drag to move the window")} />
       {settingsOpen ? (
         <SettingsPage
           onClose={() => {
