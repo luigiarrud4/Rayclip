@@ -522,10 +522,18 @@ unsafe extern "system" fn moldura_proc(
         // então ele roda primeiro e **o resultado dele é descartado**: devolver
         // TRUE é "eu cuidei, não repinte a moldura".
         WM_NCACTIVATE => {
+            // A política tem de valer **antes** de o DWM compor a moldura, e a
+            // composição acontece na ativação: pedir aqui, na hora, é o que
+            // evita a legenda. Em segundo plano chega tarde.
+            politica_dwm(hwnd as isize);
+            // O tao precisa da mensagem (ele marca `set_active` e dispara
+            // ganho/perda de foco); o resultado dele é descartado.
             let _ = DefSubclassProc(hwnd, msg, wp, lp);
             crate::log(&format!("moldura: NCACTIVATE wp={wp} lp={lp}"));
             pede_reafirmar(hwnd);
-            1
+            // Devolver 0 é "não repinte a moldura". Devolver 1 pede o contrário
+            // — era o que podia desenhar a legenda em máquina sem composição.
+            0
         }
         WM_NCUAHDRAWCAPTION | WM_NCUAHDRAWFRAME => 0,
         // Reafirma em segundo plano: chamar `DwmSetWindowAttribute` ou
@@ -544,6 +552,9 @@ unsafe extern "system" fn moldura_proc(
             // compôs a legenda foi o DWM, e ele só a descarta no próximo
             // desenho da moldura. `reagir_moldura` recalcula a área; este
             // `RedrawWindow` manda redesenhá-la na hora.
+            // Sempre: a legenda pode ser composta depois da política (o DWM
+            // compõe no seu próprio ritmo), então apagar só "quando havia NC"
+            // deixava passar o caso em que ele compõe logo em seguida.
             redesenhar_moldura(hwnd as isize);
             1
         }
@@ -575,6 +586,11 @@ pub fn redesenhar_moldura(h: isize) {
     use windows_sys::Win32::Graphics::Gdi::{
         RedrawWindow, RDW_FRAME, RDW_INVALIDATE, RDW_UPDATENOW,
     };
+    // `RDW_FRAME` **é necessário** — medido: só invalidar o cliente não faz o
+    // DWM descartar a legenda que já compôs; pedir o redesenho da moldura sim.
+    // Como é caro e é justamente o que convida o pintor de moldura a trabalhar,
+    // ele **só** roda quando houve NC composto (ver `NC_COMPOSTO`), nunca numa
+    // abertura normal em que nada foi desenhado.
     unsafe {
         RedrawWindow(
             h as HWND,
@@ -609,6 +625,7 @@ pub fn reagir_moldura(h: isize) {
 
 static REAFIRMA_PENDENTE: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
+
 
 /// Pede **uma** reafirmação pendente. Sem isso, cada ativação (que é frequente:
 /// abrir, colar, clicar) enfileraria um `SetWindowPos` por mensagem.

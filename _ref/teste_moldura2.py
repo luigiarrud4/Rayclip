@@ -115,7 +115,7 @@ def main():
     time.sleep(1.2)
     (l, t, r, b), faixa4 = caixa(hwnd)
     claro = topo_marcado(hwnd)
-    ok = faixa4 == (0, 0) and claro < 80
+    ok = faixa4 == (0, 0) and claro <= limpo * 1.3 + 40
     print(f"4. sabotada : faixa={faixa4} topo_claro={claro} (limpo={limpo}) {'OK (sem legenda)' if ok else 'LEGENDA APARECEU'}")
     ImageGrab.grab(bbox=(l, t, r, t + 90)).save(r"C:\Windows\System32\_rayclip_tmp\s43_topo.png")
 

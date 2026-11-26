@@ -513,6 +513,19 @@ copiou, então se o gerenciador não publicar o marcador o conteúdo entra no
 histórico dele. A decisão fica nossa, de propósito, e o interruptor "Also capture
 passwords & protected content" desliga o filtro quando você quiser.
 
+### Novidades da v0.1.49 — a barra clássica não volta mais ao abrir pelo atalho
+
+- A v0.1.48 pediu ao Windows para **repintar a moldura** em cada ativação
+  (`WM_NCACTIVATE` devolvendo TRUE) — e em máquina onde a moldura é pintada pelo
+  caminho clássico isso desenhava a barra de título **toda vez** que o atalho
+  abria a janela. Agora a resposta é "não repinte".
+- A limpeza da legenda, quando ela chega a ser composta, passou a ser feita
+  pedindo o redesenho da moldura (`RDW_FRAME`) — medido: só invalidar o interior
+  da janela **não** apaga a legenda que o Windows já compôs.
+- Conferido: seis aberturas seguidas pelo `Alt+Space`, com a janela sem nenhuma
+  moldura desenhada e sem barra na captura; e o estado que reproduz o defeito
+  (moldura forçada) continua limpo.
+
 ### Novidades da v0.1.48 — abrir pela bandeja não traz mais a barra do Windows 7
 
 - O clique no ícone da bandeja podia abrir a janela com a **barra de título

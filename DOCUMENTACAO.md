@@ -8,11 +8,11 @@ dele é usado; só o resultado visual e funcional foi reproduzido.
 
 - Pasta do projeto: `C:\Users\Lugia\Projects\rayclip`
 - Stack: **Tauri v2 (Rust) + React + TypeScript + WebView2**
-- Versão atual: **0.1.48**
+- Versão atual: **0.1.49**
 - Binário: `src-tauri/target/release/rayclip.exe` (11.157.504 B, SHA256
-  `32e664a88385cc5f15a067d04872df87ae7a7673b260d4b554b73a02338a58be`)
-- Instalador: `src-tauri/target/release/bundle/nsis/Rayclip_0.1.48_x64-setup.exe`
-  (3.820.700 B)
+  `1fe793514f5b99ac20c09e63735f66846547273361c4aba9ea3767c57af03dd0`)
+- Instalador: `src-tauri/target/release/bundle/nsis/Rayclip_0.1.49_x64-setup.exe`
+  (3.821.123 B)
 
 Este documento explica **o que o app faz, como é feito por dentro e como cada
 problema difícil foi resolvido** (com a medição usada para provar).
@@ -3475,3 +3475,47 @@ Duas portas ficaram no app só para esses testes: `tray_rect` (posição do íco
 na tela) e `simular_bandeja` (chama o mesmo `show_window` da bandeja).
 
 `cargo test --lib` **62/62** · `cargo clippy --all-targets` 0 · `npx tsc --noEmit` 0.
+
+### 8.65 A v0.1.48 trouxe a legenda de volta no atalho — e a lição do `WM_NCACTIVATE` (v0.1.49)
+
+Na v0.1.48 o `WM_NCACTIVATE` passou a devolver **1**. O valor de retorno dessa
+mensagem não é decorativo: devolver TRUE **pede** que o sistema repinte a barra
+de título. Numa máquina em que a moldura é pintada pelo caminho clássico (sem
+composição do DWM — VM, RDP, driver antigo), isso desenha a legenda **a cada
+ativação**, ou seja, a cada abertura pelo atalho. Foi exatamente o que o usuário
+relatou depois da atualização.
+
+Agora devolve **0** ("não repinte a moldura"), e o `DefSubclassProc` continua
+rodando antes (o tao precisa da mensagem para marcar `set_active`).
+
+#### O que ficou (medido, um a um)
+
+| Peça | Por quê |
+|---|---|
+| `WM_NCACTIVATE` -> 0 | não pede repintura; era o gatilho do defeito |
+| `politica_dwm` na própria ativação | a política tem de valer **antes** de o DWM compor a moldura |
+| `WM_NCUAHDRAWCAPTION`/`WM_NCUAHDRAWFRAME` -> 0 | caminho clássico de legenda |
+| `RedrawWindow(RDW_FRAME ...)` na reafirmação | **é o que apaga** a legenda já composta |
+| `WM_NCPAINT` -> 0 | nada de moldura pintada pela janela |
+
+O `RDW_FRAME` foi testado nas duas pontas: **sem** ele (só invalidando o
+cliente) a legenda composta **não** some; **com** ele some. Ele roda sempre na
+reafirmação — tentar rodá-lo só "quando havia NC composto" falhou, porque o DWM
+pode compor a legenda **depois** da política ser desligada.
+
+#### Medições
+
+- Atalho `Alt+Space` seis vezes seguidas: `DWMWA_NCRENDERING_ENABLED = False` em
+  **6 de 6**, faixa (0, 0) e captura do topo sem legenda.
+- Sabotagem (`DWMNCRP_USEWINDOWSTYLE` + `WM_NCACTIVATE` + `WM_NCUAHDRAW*`): a
+  captura do topo continua sem legenda.
+- Resize pela borda: 1120 -> 1200 px. Maximizar: 1936x1056 numa tela de 1080.
+
+#### Armadilha de medição registrada
+
+Contar "pixels claros nas primeiras 26 linhas" dá falso-positivo: em várias
+capturas o número salta de 0 para ~1230 **sem legenda nenhuma** — é a borda de
+foco da janela (o realce de 1–2 px na moldura) entrando na conta. A conferência
+confiável é a combinação de `DWMWA_NCRENDERING_ENABLED` com a captura olhada de
+fato. Foi essa armadilha que fez parecer, por um tempo, que a v0.1.48 tinha
+consertado o caminho da bandeja e quebrado o do atalho ao mesmo tempo.
