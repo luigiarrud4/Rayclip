@@ -513,6 +513,18 @@ copiou, então se o gerenciador não publicar o marcador o conteúdo entra no
 histórico dele. A decisão fica nossa, de propósito, e o interruptor "Also capture
 passwords & protected content" desliga o filtro quando você quiser.
 
+### Novidades da v0.1.54 — o ícone no canto era ordem de chamada
+
+- A faixa clara com o **ícone do app** no canto vinha de dois erros nossos:
+  arrancávamos `WS_CAPTION` **antes** do `DefSubclassProc` (que é quem roda o tao,
+  e o tao repõe os estilos), e o próprio arranque re-apegava a moldura com
+  `SWP_FRAMECHANGED` — e todo re-apego pinta 1-3 quadros de legenda.
+- Agora o bit é arrancado **depois** do tao, **dentro do `WM_NCPAINT`** (o momento
+  exato em que a legenda seria desenhada), **antes do `show()`** (com a janela
+  ainda invisível) e **sem** `SetWindowPos`.
+- Medido: 5 aberturas com `legenda=nao` e `faixa=(0,0)` em **5 de 5**, maximizada
+  1920x1040, resize 1120 -> 1208, estado sabotado sem nenhuma legenda.
+
 ### Novidades da v0.1.53 — sem `WS_CAPTION`: não há onde pintar a barra
 
 - Teste pedido pelo usuário: em vez de depender da moldura nativa, **tirar

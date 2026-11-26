@@ -593,7 +593,12 @@ unsafe extern "system" fn moldura_proc(
     const WM_NCUAHDRAWCAPTION: u32 = 0x00AE;
     const WM_NCUAHDRAWFRAME: u32 = 0x00AF;
     match msg {
-        WM_NCPAINT => 0,
+        WM_NCPAINT => {
+            // Pintar a moldura é o momento em que a legenda apareceria: o bit
+            // é arrancado aqui e a pintura é recusada logo abaixo.
+            estilo_sem_legenda(hwnd as isize);
+            0
+        }
         // Sem `WS_CAPTION` não há moldura para pegar: quem sabe onde ficam as
         // bordas agora somos nós. Devolver `HTLEFT`/`HTTOPLEFT`/... faz o
         // próprio Windows mostrar a seta de redimensionar (a "cruz" nos cantos)
@@ -680,7 +685,7 @@ unsafe extern "system" fn moldura_proc(
             crate::log("moldura: REAFIRMA");
             REAFIRMA_PENDENTE.store(false, std::sync::atomic::Ordering::Relaxed);
             politica_dwm(hwnd as isize);
-            tira_legenda(hwnd as isize);
+            estilo_sem_legenda(hwnd as isize);
             // Re-apegar a moldura (`SWP_FRAMECHANGED`) faz o DWM pintar de 1 a
             // 3 quadros de legenda clássica — é o piscar que o usuário ainda
             // via na v0.1.51. Aqui ele só roda se a faixa estiver errada; o
@@ -913,18 +918,27 @@ pub fn tira_legenda(h: isize) -> bool {
     if h == 0 {
         return false;
     }
+    // **Sem** `SetWindowPos`: re-apegar a moldura (`SWP_FRAMECHANGED`) faz o DWM
+    // pintar de 1 a 3 quadros de legenda clássica — era o "logo no canto" que
+    // ainda aparecia. A área não-cliente já é zero (o tao responde 0 no
+    // `WM_NCCALCSIZE`), e isso não depende do bit; então basta arrancá-lo.
+    estilo_sem_legenda(h)
+}
+
+/// Só o `SetWindowLongPtrW` — seguro para usar dentro de tratamento de mensagem.
+pub fn estilo_sem_legenda(h: isize) -> bool {
+    if h == 0 {
+        return false;
+    }
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos, GWL_STYLE, SWP_FRAMECHANGED,
-        SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOOWNERZORDER, SWP_NOSIZE, SWP_NOZORDER, WS_CAPTION,
+        GetWindowLongPtrW, SetWindowLongPtrW, GWL_STYLE, WS_CAPTION,
     };
-    const BASE: u32 = SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_NOACTIVATE;
     unsafe {
         let estilo = GetWindowLongPtrW(h as HWND, GWL_STYLE);
         if estilo & (WS_CAPTION as isize) == 0 {
             return false;
         }
         SetWindowLongPtrW(h as HWND, GWL_STYLE, estilo & !(WS_CAPTION as isize));
-        SetWindowPos(h as HWND, std::ptr::null_mut(), 0, 0, 0, 0, BASE | SWP_FRAMECHANGED);
     }
     true
 }

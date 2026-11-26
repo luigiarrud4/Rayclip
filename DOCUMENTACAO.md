@@ -8,11 +8,11 @@ dele é usado; só o resultado visual e funcional foi reproduzido.
 
 - Pasta do projeto: `C:\Users\Lugia\Projects\rayclip`
 - Stack: **Tauri v2 (Rust) + React + TypeScript + WebView2**
-- Versão atual: **0.1.53**
-- Binário: `src-tauri/target/release/rayclip.exe` (11.160.064 B, SHA256
-  `861c09eb3cc0444075cef60e4f029fbedd26f994f5f8fb491a756bd4a23ea436`)
-- Instalador: `src-tauri/target/release/bundle/nsis/Rayclip_0.1.53_x64-setup.exe`
-  (3.823.309 B)
+- Versão atual: **0.1.54**
+- Binário: `src-tauri/target/release/rayclip.exe` (11.160.576 B, SHA256
+  `a38a280cf555fc875e8f38fbb11b8bb4986b61b7a69c907e8c6eb0408f1c90ea`)
+- Instalador: `src-tauri/target/release/bundle/nsis/Rayclip_0.1.54_x64-setup.exe`
+  (3.823.870 B)
 
 Este documento explica **o que o app faz, como é feito por dentro e como cada
 problema difícil foi resolvido** (com a medição usada para provar).
@@ -3724,3 +3724,46 @@ maximizada; a regra continua valendo).
 convert` no `hInstance` (o `GetModuleHandleW` era lido como `int`). Passou a ter
 `restype = c_void_p` e a lista de `argtypes` em `teste_translucido.py` e
 `teste_blur_padrao.py`.
+
+### 8.70 O ícone no canto: arrancávamos a legenda **antes** do tao (v0.1.54)
+
+Captura `Screenshot_32.png` (menu Iniciar -> `Win+V` -> clique no app -> print):
+em vez da faixa inteira, aparecia uma faixa clara com **o ícone do app no canto
+superior esquerdo**. Medido na imagem: linha 0 escura (12), faixa clara de
+**~30 px** (luminância 113-121) e o glifo do ícone entre x=15 e x=65 — e **zero**
+pixels vermelhos, ou seja, sem botões: era a legenda clássica **sem** a parte
+direita.
+
+#### Causa
+
+Duas coisas, ambas no nosso código:
+
+1. **Ordem.** Em `WM_NCACTIVATE` arrancávamos `WS_CAPTION` **antes** do
+   `DefSubclassProc`, e é o `DefSubclassProc` que roda o tao — que **repõe os
+   estilos**. Ou seja: arrancávamos e ele recolocava, tudo antes da composição.
+2. **O próprio arranque re-apegava a moldura.** `tira_legenda` chamava
+   `SetWindowPos(SWP_FRAMECHANGED)`, e todo re-apego pinta 1-3 quadros de legenda
+   clássica (a mesma medição da §8.68).
+
+#### Correção
+
+- `tira_legenda` agora **só** faz `SetWindowLongPtrW` (`estilo_sem_legenda`),
+  **nunca** `SetWindowPos`. A área não-cliente já é zero porque o tao responde 0
+  no `WM_NCCALCSIZE` — isso não depende do bit.
+- `WM_NCACTIVATE`: o bit é arrancado **depois** do `DefSubclassProc`.
+- `WM_NCPAINT`: arranca o bit **antes** de recusar a pintura (`return 0`). É o
+  momento exato em que a legenda seria desenhada.
+- Em `show_window`, `set_always_on_top(true)` (que faz o tao reaplicar os
+  estilos) passou a vir **antes** do `show()`, com o arranque no meio: o bit sai
+  enquanto a janela ainda está invisível.
+
+#### Medido na 0.1.54 instalada
+
+- 5 aberturas por `Alt+Space`, com o estilo lido **com a janela visível**:
+  `legenda=nao` e `faixa=(0,0)` em **5 de 5**.
+- Resize 1120 -> 1208, maximizada 1920x1040 (fora da barra de tarefas), estado
+  sabotado `topo_claro = 0` (igual à referência).
+- Reprodução do caminho do usuário (`Win+V` sintético + clique + 6 capturas do
+  topo a cada 120 ms): luminância **25,4 constante**, sem nenhuma faixa clara. O
+  `Win+V` sintético não abre o app nesta máquina (o gancho do shell é quem abre),
+  então esse caminho continua dependendo do teste do usuário.

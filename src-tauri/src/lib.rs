@@ -2897,8 +2897,14 @@ fn show_window(app: &AppHandle) {
         if let Ok(h) = win.hwnd() {
             win32::politica_dwm(h.0 as isize);
         }
-        let _ = win.show();
+        // `set_always_on_top` faz o tao reaplicar os estilos — e ele repõe
+        // `WS_CAPTION`. Por isso ele vem **antes** do `show()`: assim o bit é
+        // arrancado enquanto a janela ainda está invisível.
         let _ = win.set_always_on_top(true);
+        if let Ok(h) = win.hwnd() {
+            win32::tira_legenda(h.0 as isize);
+        }
+        let _ = win.show();
         if let Ok(h) = win.hwnd() {
             // `show()` e `set_always_on_top()` fazem o tao reaplicar os estilos
             // da janela, e `to_window_styles()` do tao repõe `WS_CAPTION` em
