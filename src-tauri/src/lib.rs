@@ -3520,6 +3520,26 @@ pub fn run() {
     // que é o certo quando o Windows o inicia sozinho: ninguém quer a janela
     // pulando na frente no login. A flag existe para testar (e para quem quiser
     // abrir pelo atalho com a janela à mostra).
+    // Argumentos de instalação: o gancho `POSTINSTALL`/`PREUNINSTALL` do NSIS
+    // chama `rayclip.exe --iniciar-com-windows` (ou `--remover-do-inicio`) para
+    // mexer no logon usando o **próprio app** — a tarefa agendada elevada é
+    // criada do jeito que o resto do código espera. Faz o trabalho e sai sem
+    // abrir janela nem bandeja.
+    if std::env::args().any(|a| a == "--iniciar-com-windows" || a == "--remover-do-inicio") {
+        let ligar = std::env::args().any(|a| a == "--iniciar-com-windows");
+        let mut cfg = settings::Settings::load_sem_app();
+        cfg.launch_at_login = ligar;
+        match cfg.save_sem_app() {
+            Ok(()) => log(&format!("instalador: iniciar_com_windows={ligar} gravado")),
+            Err(e) => log(&format!("instalador: falha ao gravar ajuste: {e}")),
+        }
+        match sysinteg::set_startup(ligar) {
+            Ok(()) => log(&format!("instalador: logon ajustado ({ligar})")),
+            Err(e) => log(&format!("instalador: falha no logon: {e}")),
+        }
+        return;
+    }
+
     let abrir_no_inicio = std::env::args().any(|a| a == "--open");
     log(&format!("inicio: abrir_no_inicio={abrir_no_inicio}"));
 

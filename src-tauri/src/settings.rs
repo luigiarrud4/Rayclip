@@ -135,7 +135,11 @@ impl Default for Settings {
             capture_sensitive: false,
             ocr_enabled: true,
             link_previews: true,
-            launch_at_login: false,
+            // **Padrão ligado** desde a v0.1.60: é um painel de histórico, tem de
+            // estar esperando no logon — é o que o Raycast faz. O instalador
+            // também liga (gancho `POSTINSTALL`), então quem instala já sai com
+            // isso valendo; quem não quiser desliga em Configurações > Sistema.
+            launch_at_login: true,
             offline_mode: false,
             hover_preview: false,
             theme: "dark".into(),
@@ -206,6 +210,38 @@ impl Settings {
         Some(dir.join("settings.json"))
     }
 
+    /// Caminho do `settings.json` **sem** `AppHandle`.
+    ///
+    /// Serve para os argumentos de instalação (`--iniciar-com-windows`), que rodam
+    /// antes de o Tauri existir. É o mesmo diretório que `app_data_dir()` resolve:
+    /// `%APPDATA%\com.rayclip.app`.
+    pub fn path_sem_app() -> Option<PathBuf> {
+        let appdata = std::env::var_os("APPDATA")?;
+        let dir = PathBuf::from(appdata).join("com.rayclip.app");
+        std::fs::create_dir_all(&dir).ok()?;
+        Some(dir.join("settings.json"))
+    }
+
+    /// Lê o `settings.json` sem `AppHandle` (ver `path_sem_app`).
+    pub fn load_sem_app() -> Self {
+        let Some(path) = Self::path_sem_app() else {
+            return Settings::default();
+        };
+        let mut cfg: Settings = std::fs::read_to_string(path)
+            .ok()
+            .and_then(|raw| serde_json::from_str(&raw).ok())
+            .unwrap_or_default();
+        cfg.migrate();
+        cfg
+    }
+
+    /// Grava o `settings.json` sem `AppHandle`.
+    pub fn save_sem_app(&self) -> Result<(), String> {
+        let path = Self::path_sem_app().ok_or("sem diretório de dados")?;
+        let raw = serde_json::to_string_pretty(self).map_err(|e| e.to_string())?;
+        std::fs::write(path, raw).map_err(|e| e.to_string())
+    }
+
     pub fn load(app: &tauri::AppHandle) -> Self {
         let Some(path) = Self::path(app) else {
             return Settings::default();
@@ -269,6 +305,13 @@ mod testes {
         assert_eq!(k.clear_all, "Ctrl+Shift+Delete");
         assert!(!k.delete.to_lowercase().contains("backspace"));
         assert!(!k.clear_all.to_lowercase().contains("backspace"));
+    }
+
+    #[test]
+    fn inicia_com_o_windows_por_padrao() {
+        // Pedido do usuário (v0.1.61): instalação nova já vem ligada, e o
+        // `POSTINSTALL` do NSIS também liga por `--iniciar-com-windows`.
+        assert!(Settings::default().launch_at_login);
     }
 
     #[test]

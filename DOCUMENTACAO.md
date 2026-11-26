@@ -8,11 +8,11 @@ dele é usado; só o resultado visual e funcional foi reproduzido.
 
 - Pasta do projeto: `C:\Users\Lugia\Projects\rayclip`
 - Stack: **Tauri v2 (Rust) + React + TypeScript + WebView2**
-- Versão atual: **0.1.59**
-- Binário: `src-tauri/target/release/rayclip.exe` (11.161.088 B, SHA256
-  `d449290e04dfb35f84163ebad14684c5a0d822e3f018eb4d25fc9e235dbc201b`)
-- Instalador: `src-tauri/target/release/bundle/nsis/Rayclip_0.1.59_x64-setup.exe`
-  (3.822.149 B)
+- Versão atual: **0.1.61**
+- Binário: `src-tauri/target/release/rayclip.exe` (SHA256
+  `0a9947ad1bf07d6d2b01a882698c8075c664cd0532d100626ea7f5e208cab98e`)
+- Instalador: `src-tauri/target/release/bundle/nsis/Rayclip_0.1.61_x64-setup.exe`
+  (3.832.419 B) · instala em `C:\Program Files\Rayclip` com UAC
 
 Este documento explica **o que o app faz, como é feito por dentro e como cada
 problema difícil foi resolvido** (com a medição usada para provar).
@@ -3997,3 +3997,63 @@ continua funcionando — é o `data-tauri-drag-region`, não o tooltip.
   **visíveis do processo do app**: nenhuma `tooltips_class32` (só o
   `Tao Thread Event Target`, 16x16, que é interno do tao).
 - `check_i18n.py`: 306 usos de `t()`, **0 sem tradução**.
+
+### 8.77 Instalador: admin, fecha o app em execução, inicia com o Windows (v0.1.61)
+
+Pedido: *"conserte o setup.exe: colocar para iniciar como admin e conseguir fechar o
+Rayclip para instalar o novo; e seria legal uma opção de iniciar com o Windows, ou
+já deixar como padrão"*.
+
+#### O que mudou no `tauri.conf.json`
+
+```json
+"bundle": { "windows": { "nsis": {
+  "installMode": "perMachine",
+  "installerHooks": "./windows/hooks.nsh"
+}}}
+```
+
+`perMachine` faz o instalador pedir **UAC** (`RequestExecutionLevel admin` no
+`installer.nsi` gerado) e instalar em `$PROGRAMFILES64\Rayclip` em vez de
+`%LOCALAPPDATA%`. Era o que faltava: o app roda elevado (`requireAdministrator`),
+então um instalador sem elevação não conseguia nem encerrar o processo em execução.
+
+#### `src-tauri/windows/hooks.nsh`
+
+- **PREINSTALL**: `taskkill /IM rayclip.exe /F` + 900 ms de respiro, **antes** do
+  `CheckIfAppIsRunning` do próprio Tauri (verificado no `installer.nsi`: o gancho
+  entra na linha 678 e a checagem na 681). Depois, **migração**: se existe a
+  instalação por usuário das versões até 0.1.59, ela é removida
+  (`RMDir /r "$LOCALAPPDATA\Rayclip"` + os atalhos antigos). Os **dados** não são
+  tocados: histórico e ajustes vivem em `%APPDATA%\com.rayclip.app`.
+- **POSTINSTALL**: `ExecWait '"$INSTDIR
+ayclip.exe" --iniciar-com-windows'` —
+  liga o logon usando o **próprio app**, que cria a tarefa agendada elevada
+  (`schtasks /RL HIGHEST`) do jeito que o resto do código espera.
+- **PREUNINSTALL**: `--remover-do-inicio` + `schtasks /Delete /TN Rayclip` — sem
+  isso sobrava uma tarefa apontando para um exe que não existe mais.
+
+#### Argumentos novos no app
+
+`--iniciar-com-windows` e `--remover-do-inicio`: gravam `launchAtLogin`, chamam
+`sysinteg::set_startup` e **saem sem abrir janela nem bandeja** (rodam antes do
+Tauri existir). Para isso, `Settings::load_sem_app`/`save_sem_app`/`path_sem_app`
+leem e gravam o `settings.json` sem `AppHandle`.
+
+#### Padrão
+
+`Settings::default().launch_at_login` passou de `false` para **`true`**: é um painel
+de histórico, tem de estar esperando no logon (é o que o Raycast faz). Teste novo
+`inicia_com_o_windows_por_padrao` cobre isso.
+
+#### Verificado
+
+- `RequestExecutionLevel admin` no `installer.nsi`; `$INSTDIR` =
+  `$PROGRAMFILES64\Rayclip`; os três ganchos inseridos (linhas 678, 750, 795).
+- `rayclip.exe --iniciar-com-windows` (build de depuração, sem UAC): grava
+  `launchAtLogin=true`, cria `\Rayclip` no `schtasks` e **sai com código 0**.
+  `--remover-do-inicio` desfaz (tarefa some, `launchAtLogin=false`).
+- `cargo test --lib` = **65 testes**, clippy 0.
+
+Não verificado aqui: o UAC do instalador (este shell não é elevado, então rodar o
+`setup.exe` abriria a janela do UAC sem ninguém para clicar) — fica para o usuário.

@@ -513,6 +513,17 @@ copiou, então se o gerenciador não publicar o marcador o conteúdo entra no
 histórico dele. A decisão fica nossa, de propósito, e o interruptor "Also capture
 passwords & protected content" desliga o filtro quando você quiser.
 
+### Novidades da v0.1.61 — instalador com UAC, fecha o app e liga o logon
+
+- O setup agora **pede administrador** (`installMode: perMachine`) e instala em
+  `C:\Program Files\Rayclip`. Sem elevação ele não conseguia encerrar o Rayclip,
+  que roda elevado.
+- Ganchos do NSIS (`src-tauri/windows/hooks.nsh`): **antes de instalar** fecha o
+  app (`taskkill /IM rayclip.exe /F`) e remove a instalação antiga por usuário (os
+  dados em `%APPDATA%` ficam); **depois de instalar** liga o login pelo próprio app
+  (`--iniciar-com-windows`); **ao desinstalar** tira a tarefa agendada.
+- `launchAtLogin` agora é **padrão ligado** — instalação nova já sobe no logon.
+
 ### Novidades da v0.1.59 — o tooltip do puxador saiu da tela
 
 - O `title` do puxador do topo ("Arraste para mover a janela") é desenhado pelo
