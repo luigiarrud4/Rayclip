@@ -8,11 +8,11 @@ dele é usado; só o resultado visual e funcional foi reproduzido.
 
 - Pasta do projeto: `C:\Users\Lugia\Projects\rayclip`
 - Stack: **Tauri v2 (Rust) + React + TypeScript + WebView2**
-- Versão atual: **0.1.49**
-- Binário: `src-tauri/target/release/rayclip.exe` (11.157.504 B, SHA256
-  `1fe793514f5b99ac20c09e63735f66846547273361c4aba9ea3767c57af03dd0`)
-- Instalador: `src-tauri/target/release/bundle/nsis/Rayclip_0.1.49_x64-setup.exe`
-  (3.821.123 B)
+- Versão atual: **0.1.50**
+- Binário: `src-tauri/target/release/rayclip.exe` (11.158.528 B, SHA256
+  `7b9a9cdbae580022c948bee18bd1ee4a3db40b4429da81e97e024fe0dd316bdc`)
+- Instalador: `src-tauri/target/release/bundle/nsis/Rayclip_0.1.50_x64-setup.exe`
+  (3.823.352 B)
 
 Este documento explica **o que o app faz, como é feito por dentro e como cada
 problema difícil foi resolvido** (com a medição usada para provar).
@@ -3519,3 +3519,56 @@ foco da janela (o realce de 1–2 px na moldura) entrando na conta. A conferênc
 confiável é a combinação de `DWMWA_NCRENDERING_ENABLED` com a captura olhada de
 fato. Foi essa armadilha que fez parecer, por um tempo, que a v0.1.48 tinha
 consertado o caminho da bandeja e quebrado o do atalho ao mesmo tempo.
+
+### 8.66 "Isso já era problema antes?" — sim, e agora a faixa é forçada a zero (v0.1.50)
+
+#### A pergunta do usuário
+
+Antes de mexer em código, procurei a assinatura do defeito (o botão **fechar
+vermelho** da legenda nas primeiras 40 linhas) em **todas** as capturas que
+existem no projeto e nas enviadas pelo usuário:
+
+| Captura | Quando | Legenda? |
+|---|---|---|
+| `_ref/capturas/*` (testes das v0.1.3x–0.1.4x) | 2026-11-24 | **não** |
+| `Screenshot_2..5` | 2026-03-04 | outro app (1162x882) — não conta |
+| **`Screenshot_28`** (bandeja) | 2026-11-25 **21:46** (v0.1.46) | **sim** |
+| `Screenshot_29` (configurações) | 2026-11-25 23:41 | faixa **vazia de ~16 px** |
+| **`Screenshot_30`** (atalho) | 2026-11-25 **23:44** (v0.1.49) | **sim** |
+
+Duas conclusões:
+
+1. **Não nasceu na v0.1.48.** A captura de 21:46, feita na v0.1.46, já mostra a
+   legenda. A v0.1.48 só a tornou mais frequente (ela *pedia* a repintura).
+2. **`Screenshot_29` é a peça que faltava**: uma faixa de ~16 px **vazia** no
+   topo. Faixa vazia = a área não-cliente existe (o espaço está reservado) e
+   simplesmente não foi pintada. Ou seja: o problema de fundo não é "alguém
+   pinta a legenda", é **a área não-cliente não ser zero** — quando ela existe,
+   em algumas máquinas o tema a pinta, em outras ela fica como um talo vazio.
+
+#### O que a v0.1.50 faz
+
+`sem_moldura` passou a **conferir** a faixa depois de pedir a política do DWM e
+o recálculo. Se não for `(0, 0)`, executa `zera_faixa`:
+
+1. tira `WS_CAPTION` do estilo;
+2. `SetWindowPos(..., SWP_FRAMECHANGED)` — agora o `WM_NCCALCSIZE` devolve a área
+   cheia (sem legenda);
+3. devolve `WS_CAPTION` **sem** novo `SWP_FRAMECHANGED` — a alça de
+   redimensionar volta e o cálculo já feito continua nulo.
+
+Medido na janela real (script): faixa `(0, 0)` antes e depois do passe, e o
+arrasto na borda direita continua funcionando — **1200 -> 1272 px**. Remover o
+bit `WS_CAPTION` e deixá-lo fora quebrava o resize (era a descoberta da v0.1.45);
+devolvê-lo **sem** recalcular não quebra.
+
+O log passou a registrar o número em cada abertura:
+`moldura: faixa na abertura = (0, 0)`.
+
+#### Se ainda acontecer na máquina do usuário
+
+`_ref/diagnostico.ps1` (só leitura) imprime, para a janela em uso: retângulos de
+janela e cliente, **faixa (NC)**, bits de estilo, `DWMWA_NCRENDERING_ENABLED`,
+composição do DWM, build do Windows e tema. Com esses números a diferença entre
+"área não-cliente de verdade" e "pintura por cima do conteúdo" deixa de ser
+suposição.

@@ -660,6 +660,15 @@ pub fn sem_moldura(h: isize) -> i32 {
     }
     let hr = politica_dwm(h);
     reagir_moldura(h);
+    // Rede de segurança: se a área não-cliente **não** ficou nula, é ali que a
+    // barra de título cabe. Acontece quando o `WM_NCCALCSIZE` que chega durante
+    // o `CreateWindowExW` cai antes de o tao saber que a janela é sem moldura e
+    // o `DefWindowProc` reserva a faixa.
+    let faixa = faixa_nc(h);
+    if faixa != (0, 0) {
+        let depois = zera_faixa(h);
+        crate::log(&format!("moldura: faixa {faixa:?} -> {depois:?}"));
+    }
     // Uma subclasse por janela: o `AtomicIsize` guarda qual hwnd já tem a sua.
     use std::sync::atomic::Ordering;
     if MOLDA_INSTALADA.load(Ordering::Relaxed) != h {
@@ -670,6 +679,50 @@ pub fn sem_moldura(h: isize) -> i32 {
     }
     hr
 }
+/// `(altura, largura)` da área não-cliente: `janela − cliente`.
+pub fn faixa_nc(h: isize) -> (i32, i32) {
+    if h == 0 {
+        return (0, 0);
+    }
+    use windows_sys::Win32::Foundation::RECT;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{GetClientRect, GetWindowRect};
+    let (mut jan, mut cli) = (
+        RECT { left: 0, top: 0, right: 0, bottom: 0 },
+        RECT { left: 0, top: 0, right: 0, bottom: 0 },
+    );
+    unsafe {
+        GetWindowRect(h as HWND, &mut jan);
+        GetClientRect(h as HWND, &mut cli);
+    }
+    (
+        (jan.bottom - jan.top) - (cli.bottom - cli.top),
+        (jan.right - jan.left) - (cli.right - cli.left),
+    )
+}
+
+/// Zera a faixa **sem** perder a alça de redimensionar.
+///
+/// Medido: tirar `WS_CAPTION` faz o `WM_NCCALCSIZE` devolver a área cheia (é o
+/// que remove a legenda), mas a alça de resize vai junto porque quem a oferece
+/// é a moldura. Então o bit sai, o cálculo é forçado, e o bit **volta sem** um
+/// novo `SWP_FRAMECHANGED`: a alça volta, e a área já calculada continua nula.
+/// Testado: faixa (0, 0) depois do passe e arrasto na borda 1200 -> 1272 px.
+fn zera_faixa(h: isize) -> (i32, i32) {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos, GWL_STYLE, SWP_FRAMECHANGED,
+        SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOOWNERZORDER, SWP_NOSIZE, SWP_NOZORDER, WS_CAPTION,
+    };
+    const BASE: u32 = SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_NOACTIVATE;
+    unsafe {
+        let estilo = GetWindowLongPtrW(h as HWND, GWL_STYLE);
+        SetWindowLongPtrW(h as HWND, GWL_STYLE, estilo & !(WS_CAPTION as isize));
+        SetWindowPos(h as HWND, std::ptr::null_mut(), 0, 0, 0, 0, BASE | SWP_FRAMECHANGED);
+        SetWindowLongPtrW(h as HWND, GWL_STYLE, estilo);
+        SetWindowPos(h as HWND, std::ptr::null_mut(), 0, 0, 0, 0, BASE);
+    }
+    faixa_nc(h)
+}
+
 /// Classe de uma janela por handle.
 pub fn class_of_hwnd(h: isize) -> String {
     if h == 0 {

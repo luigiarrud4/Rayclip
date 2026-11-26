@@ -513,6 +513,20 @@ copiou, então se o gerenciador não publicar o marcador o conteúdo entra no
 histórico dele. A decisão fica nossa, de propósito, e o interruptor "Also capture
 passwords & protected content" desliga o filtro quando você quiser.
 
+### Novidades da v0.1.50 — a área da barra de título é forçada a zero
+
+- Investigando as capturas antigas: a barra **não** nasceu na v0.1.48 — a sua
+  captura de 21:46 (v0.1.46) já a mostrava. E a captura das configurações mostra
+  o detalhe decisivo: uma faixa **vazia** de ~16 px no topo, ou seja, a área
+  não-cliente existe e às vezes só não é pintada.
+- Agora o app **confere** essa faixa a cada abertura. Se ela não for zero, tira
+  `WS_CAPTION`, força o recálculo e devolve o bit **sem** recalcular de novo: a
+  faixa vira zero e a alça de redimensionar continua funcionando (medido:
+  1200 → 1272 px).
+- O log passa a registrar `moldura: faixa na abertura = (0, 0)` em cada abertura,
+  e o `_ref/diagnostico.ps1` (só leitura) mostra estilo, faixa, DWM e tema da
+  janela em uso.
+
 ### Novidades da v0.1.49 — a barra clássica não volta mais ao abrir pelo atalho
 
 - A v0.1.48 pediu ao Windows para **repintar a moldura** em cada ativação

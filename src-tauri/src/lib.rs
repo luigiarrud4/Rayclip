@@ -2903,6 +2903,9 @@ fn show_window(app: &AppHandle) {
             if hr != 0 {
                 log(&format!("moldura: DWM recusou o NC (hr=0x{hr:08x})"));
             }
+            // Número medido em cada abertura: se a faixa não for (0, 0), é ali
+            // que a barra clássica cabe.
+            log(&format!("moldura: faixa na abertura = {:?}", win32::faixa_nc(h.0 as isize)));
             win32::force_foreground(h.0 as isize);
         }
         let _ = app.emit("clipboard:focus", ());
