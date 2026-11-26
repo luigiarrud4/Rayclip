@@ -182,6 +182,81 @@ pub fn clipboard_owner_full() -> Option<(u32, String)> {
     }
 }
 
+/// Estado do "accent policy" da janela (o blur legado do Windows 10 e do 11 21H2).
+#[repr(C)]
+struct AccentPolicy {
+    state: u32,
+    flags: u32,
+    gradient_color: u32,
+    animation_id: u32,
+}
+
+#[repr(C)]
+struct WinCompAttrData {
+    attrib: usize,
+    data: *mut core::ffi::c_void,
+    size: usize,
+}
+
+const WCA_ACCENT_POLICY: usize = 19;
+const ACCENT_ENABLE_ACRYLICBLURBEHIND: u32 = 4;
+
+#[link(name = "kernel32")]
+extern "system" {
+    fn GetModuleHandleW(name: *const u16) -> *mut core::ffi::c_void;
+    fn GetProcAddress(module: *mut core::ffi::c_void, name: *const u8) -> *mut core::ffi::c_void;
+}
+
+type SetWcaFn = unsafe extern "system" fn(*mut core::ffi::c_void, *mut WinCompAttrData) -> i32;
+
+/// `SetWindowCompositionAttribute` não é exportada: vem de `GetProcAddress`.
+fn set_wca_proc() -> Option<SetWcaFn> {
+    unsafe {
+        static PROC: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
+        let guardado = PROC.load(std::sync::atomic::Ordering::Relaxed);
+        if guardado != 0 {
+            if guardado == -1 {
+                return None;
+            }
+            return Some(std::mem::transmute::<isize, SetWcaFn>(guardado));
+        }
+        let nome: Vec<u16> = "SetWindowCompositionAttribute\0".encode_utf16().collect();
+        let modulo_nome: Vec<u16> = "user32.dll\0".encode_utf16().collect();
+        let modulo = GetModuleHandleW(modulo_nome.as_ptr());
+        let proc = if modulo.is_null() {
+            std::ptr::null_mut()
+        } else {
+            GetProcAddress(modulo, nome.as_ptr() as *const u8)
+        };
+        if proc.is_null() {
+            PROC.store(-1, std::sync::atomic::Ordering::Relaxed);
+            return None;
+        }
+        PROC.store(proc as isize, std::sync::atomic::Ordering::Relaxed);
+        Some(std::mem::transmute::<*mut core::ffi::c_void, SetWcaFn>(proc))
+    }
+}
+
+/// Blur acrílico legado, com o véu `tint` (0xAABBGGRR).
+fn set_acrylic(hwnd: isize, tint: u32) {
+    unsafe {
+        let mut policy = AccentPolicy {
+            state: ACCENT_ENABLE_ACRYLICBLURBEHIND,
+            flags: 2, // ACCENT_FLAG_DRAW_ALL_BORDERS
+            gradient_color: tint,
+            animation_id: 0,
+        };
+        let mut data = WinCompAttrData {
+            attrib: WCA_ACCENT_POLICY,
+            data: &mut policy as *mut _ as *mut core::ffi::c_void,
+            size: std::mem::size_of::<AccentPolicy>(),
+        };
+        if let Some(f) = set_wca_proc() {
+            let _ = f(hwnd as *mut core::ffi::c_void, &mut data);
+        }
+    }
+}
+
 /// Remove o blur acrílico (volta ao fundo sólido).
 fn set_acrylic_none(hwnd: isize) {
     unsafe {
@@ -202,80 +277,28 @@ fn set_acrylic_none(hwnd: isize) {
     }
 }
 
-/// Backdrop translúcido do Windows 11. `kind`: 1 = desligado, 2 = Mica,
-/// 3 = Acrylic, 4 = Mica aplicativo.
-#[repr(C)]
-struct AccentPolicy {
-    state: u32,
-    flags: u32,
-    gradient_color: u32,
-    animation_id: u32,
-}
-
-#[repr(C)]
-struct WinCompAttrData {
-    attrib: usize,
-    data: *mut core::ffi::c_void,
-    size: usize,
-}
-
-#[link(name = "kernel32")]
-extern "system" {
-    fn GetModuleHandleW(name: *const u16) -> *mut core::ffi::c_void;
-    fn GetProcAddress(module: *mut core::ffi::c_void, name: *const u8) -> *mut core::ffi::c_void;
-}
-
-type SetWcaFn = unsafe extern "system" fn(*mut core::ffi::c_void, *mut WinCompAttrData) -> i32;
-
-/// `SetWindowCompositionAttribute` não é exportada de forma pública: vem de
-/// `GetProcAddress` em user32.dll.
-fn set_wca_proc() -> Option<SetWcaFn> {
-    static PROC: std::sync::OnceLock<Option<SetWcaFn>> = std::sync::OnceLock::new();
-    *PROC.get_or_init(|| unsafe {
-        let user32: Vec<u16> = "user32.dll\0".encode_utf16().collect();
-        let module = GetModuleHandleW(user32.as_ptr());
-        if module.is_null() {
-            return None;
-        }
-        let name = b"SetWindowCompositionAttribute\0";
-        let f = GetProcAddress(module, name.as_ptr());
-        if f.is_null() {
-            None
-        } else {
-            Some(std::mem::transmute::<*mut core::ffi::c_void, SetWcaFn>(f))
-        }
-    })
-}
-
-const WCA_ACCENT_POLICY: usize = 19;
-const ACCENT_ENABLE_ACRYLICBLURBEHIND: u32 = 4;
-
-/// Blur "acrílico" via API não documentada: funciona mesmo com os "efeitos de
-/// transparência" do Windows desligados, ao contrário do Mica do DWM.
-/// `tint` em 0xAABBGGRR.
-fn set_acrylic(hwnd: isize, tint: u32) {
-    unsafe {
-        let mut policy = AccentPolicy {
-            state: ACCENT_ENABLE_ACRYLICBLURBEHIND,
-            flags: 2, // ACCENT_FLAG_DRAW_ALL_BORDERS
-            gradient_color: tint,
-            animation_id: 0,
-        };
-        let mut data = WinCompAttrData {
-            attrib: WCA_ACCENT_POLICY,
-            data: &mut policy as *mut _ as *mut core::ffi::c_void,
-            size: std::mem::size_of::<AccentPolicy>(),
-        };
-        if let Some(f) = set_wca_proc() {
-            let _ = f(hwnd as *mut core::ffi::c_void, &mut data);
-        }
-    }
-}
-
+/// Backdrop translúcido da janela.
+///
+/// `kind`: 1 = sólido (sem desfoque), 2 = translúcido (desfoque do que está
+/// atrás).
+///
+/// **Um mecanismo só.** Antes daqui saíam dois pedidos para o mesmo efeito — o
+/// tipo de backdrop do DWM (`DWMWA_SYSTEMBACKDROP_TYPE = Mica`) **e** o
+/// `SetWindowCompositionAttribute` legado com um véu de 33% — e os dois se
+/// somam: a película do accent policy é pintada por cima do Mica. Conta medida:
+/// CSS 0,72 + véu 0,33 ⇒ `1 - (1-0,72)·(1-0,33) = 0,81` de opacidade, ou seja,
+/// sobrava ~19% do desfoque. Era isso que deixava o translúcido "fraquinho".
+///
+/// Escolha do tipo: **acrílico** (`DWMSBT_TRANSIENTWINDOW`), não Mica. O Mica
+/// amostra o **papel de parede**, não o que está atrás da janela: com o
+/// navegador atrás do app, Mica continua mostrando o papel de parede e o efeito
+/// parece não existir. O acrílico desfoca o que está de fato embaixo.
 pub fn apply_backdrop(hwnd: isize, kind: u32) {
     use windows_sys::Win32::Graphics::Dwm::DwmSetWindowAttribute;
     const DWMWA_SYSTEMBACKDROP_TYPE: u32 = 38;
     const DWMWA_USE_IMMERSIVE_DARK_MODE: u32 = 20;
+    const DWMSBT_NONE: i32 = 1;
+    const DWMSBT_TRANSIENTWINDOW: i32 = 3;
     #[link(name = "dwmapi")]
     extern "system" {
         fn DwmExtendFrameIntoClientArea(
@@ -291,47 +314,52 @@ pub fn apply_backdrop(hwnd: isize, kind: u32) {
         bottom: i32,
     }
     unsafe {
-        // Estende o vidro por toda a janela (sem isso o Mica só aparece na
-        // moldura). -1 em todas as margens = cliente inteiro; 0 desfaz.
-        let m = if kind > 1 {
-            Margins {
-                left: -1,
-                right: -1,
-                top: -1,
-                bottom: -1,
-            }
-        } else {
-            Margins {
-                left: 0,
-                right: 0,
-                top: 0,
-                bottom: 0,
-            }
+        // Estende o vidro por toda a janela (sem isso o desfoque só apareceria
+        // na moldura). -1 em todas as margens = cliente inteiro; 0 desfaz.
+        let v = if kind > 1 { -1 } else { 0 };
+        let m = Margins {
+            left: v,
+            right: v,
+            top: v,
+            bottom: v,
         };
         let _ = DwmExtendFrameIntoClientArea(
             hwnd as *mut core::ffi::c_void,
             &m as *const _ as *const core::ffi::c_void,
         );
-        let mut value = kind as i32;
-        let _ = DwmSetWindowAttribute(
+
+        let mut tipo = if kind > 1 {
+            DWMSBT_TRANSIENTWINDOW
+        } else {
+            DWMSBT_NONE
+        };
+        let hr = DwmSetWindowAttribute(
             hwnd as *mut core::ffi::c_void,
             DWMWA_SYSTEMBACKDROP_TYPE,
-            &mut value as *mut _ as *mut core::ffi::c_void,
+            &mut tipo as *mut _ as *mut core::ffi::c_void,
             std::mem::size_of::<i32>() as u32,
         );
-        if kind > 1 {
-            // tint escuro (0xAABBGGRR): A=0x55 (33%), cor #0a0a0c
-            set_acrylic(hwnd, 0x55_0C_0A_0A);
-        } else {
-            set_acrylic_none(hwnd);
+        // Fallback **medido**: em build do Windows 11 que não aceita o atributo,
+        // o acrílico legado com véu translúcido (`0x55`) ao menos escurece — mas
+        // ele **não desfoca**: com um fundo de listras atrás, as listras
+        // apareciam dentro da janela (desvio 30, contra 3,4 do DWM). Por isso
+        // ele é só o plano B de máquina antiga, nunca o caminho normal.
+        if hr != 0 {
+            if kind > 1 {
+                set_acrylic(hwnd, 0x55_0C_0A_0A);
+            } else {
+                set_acrylic_none(hwnd);
+            }
         }
-        let mut dark = 1i32;
-        let _ = DwmSetWindowAttribute(
-            hwnd as *mut core::ffi::c_void,
-            DWMWA_USE_IMMERSIVE_DARK_MODE,
-            &mut dark as *mut _ as *mut core::ffi::c_void,
-            std::mem::size_of::<i32>() as u32,
-        );
+        if kind > 1 {
+            let mut dark = 1i32;
+            let _ = DwmSetWindowAttribute(
+                hwnd as *mut core::ffi::c_void,
+                DWMWA_USE_IMMERSIVE_DARK_MODE,
+                &mut dark as *mut _ as *mut core::ffi::c_void,
+                std::mem::size_of::<i32>() as u32,
+            );
+        }
     }
 }
 

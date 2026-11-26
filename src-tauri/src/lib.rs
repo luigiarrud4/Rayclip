@@ -153,31 +153,67 @@ fn apply_shortcuts(app: &AppHandle, cfg: &mut settings::Settings) -> Vec<String>
     warnings
 }
 
-/// Aplica tudo que depende das configurações (atalhos, limite, retenção, Windows).
-fn apply_settings(app: &AppHandle, cfg: &mut settings::Settings) -> Vec<String> {
-    let mut warnings = apply_shortcuts(app, cfg);
+/// Aplica o que depende das configurações — **só o que mudou**.
+///
+/// Antes isto rodava inteiro em toda gravação: registrar atalhos globais outra
+/// vez, `schtasks` (abrir a tarefa do autostart) e `reg` (ler e escrever o
+/// `DisabledHotkeys`). Cada um desses abre um **processo**, e a conta medida era
+/// de **~1,1 s por gravação** — com o slider de transparência disparando a cada
+/// passo do mouse, a janela passava a vida esperando e parecia travada.
+///
+/// Com o diff, mexer em cor/opacidade/idioma custa ~0 (nada disto depende
+/// desses campos) e só trocar atalho/autostart/Win+V paga o preço que tem de
+/// pagar.
+fn apply_settings(
+    app: &AppHandle,
+    antes: Option<&settings::Settings>,
+    cfg: &mut settings::Settings,
+) -> Vec<String> {
+    // Sem `antes` (início do app) tudo é aplicado; com `antes`, só o que mudou.
+    macro_rules! mudou {
+        ($cmp:expr) => {
+            match antes {
+                Some(a) => $cmp(a, cfg),
+                None => true,
+            }
+        };
+    }
+    let mut warnings = Vec::new();
+    if mudou!(|a: &settings::Settings, b: &settings::Settings| a.show_hotkey != b.show_hotkey
+        || a.paste_hotkey != b.paste_hotkey)
+    {
+        warnings.extend(apply_shortcuts(app, cfg));
+    }
+    if mudou!(|a: &settings::Settings, b: &settings::Settings| a.max_entries != b.max_entries
+        || a.retention_days != b.retention_days)
     {
         let state = app.state::<AppState>();
         let mut store = lock_store(&state.store);
         store.set_max_entries(cfg.max_entries);
         store.purge_older_than(cfg.retention_days);
     }
-    if let Err(e) = sysinteg::set_replace_win_v(cfg.replace_win_v) {
-        warnings.push(format!("win+v: {e}"));
+    if mudou!(|a: &settings::Settings, b: &settings::Settings| a.replace_win_v != b.replace_win_v) {
+        if let Err(e) = sysinteg::set_replace_win_v(cfg.replace_win_v) {
+            warnings.push(format!("win+v: {e}"));
+        }
     }
-    if let Err(e) = sysinteg::set_startup(cfg.launch_at_login) {
-        warnings.push(format!("startup: {e}"));
+    if mudou!(|a: &settings::Settings, b: &settings::Settings| a.launch_at_login != b.launch_at_login) {
+        if let Err(e) = sysinteg::set_startup(cfg.launch_at_login) {
+            warnings.push(format!("startup: {e}"));
+        }
     }
-    if let Some(win) = app.get_webview_window("main") {
-        if let Ok(h) = win.hwnd() {
-            win32::apply_backdrop(
-                h.0 as isize,
-                if cfg.translucent && sysinteg::windows_transparency() {
-                    2
-                } else {
-                    1
-                },
-            );
+    if mudou!(|a: &settings::Settings, b: &settings::Settings| a.translucent != b.translucent) {
+        if let Some(win) = app.get_webview_window("main") {
+            if let Ok(h) = win.hwnd() {
+                win32::apply_backdrop(
+                    h.0 as isize,
+                    if cfg.translucent && sysinteg::windows_transparency() {
+                        2
+                    } else {
+                        1
+                    },
+                );
+            }
         }
     }
     warnings
@@ -490,19 +526,27 @@ fn save_settings(
     state: State<AppState>,
     settings: settings::Settings,
 ) -> Result<Vec<String>, String> {
+    let inicio = std::time::Instant::now();
+    // Estado **anterior** (o que está valendo), para aplicar só o que mudou.
+    let anterior = lock_settings(&state.settings).clone();
     let mut cfg = settings.sanitized();
     cfg.save(&app)?;
-    let antes = cfg.clone();
     *lock_settings(&state.settings) = cfg.clone();
-    let warnings = apply_settings(&app, &mut cfg);
+    let warnings = apply_settings(&app, Some(&anterior), &mut cfg);
     // Se algum atalho foi revertido (já usado por outro app), o valor mantido
     // tem que ir para o disco — senão a próxima abertura tentaria de novo o
     // atalho impossível e o app ficaria sem atalho de novo.
-    if cfg.show_hotkey != antes.show_hotkey || cfg.paste_hotkey != antes.paste_hotkey {
+    if cfg.show_hotkey != anterior.show_hotkey || cfg.paste_hotkey != anterior.paste_hotkey {
         cfg.save(&app)?;
         *lock_settings(&state.settings) = cfg.clone();
     }
-    log(&format!("settings saved ({} avisos)", warnings.len()));
+    // Tempo da gravação a partir daqui: `save_settings` que passa de ~100 ms é
+    // sinal de que algum passo caro voltou a rodar sem necessidade.
+    log(&format!(
+        "settings saved in {} ms ({} avisos)",
+        inicio.elapsed().as_millis(),
+        warnings.len()
+    ));
     // Avisa a UI (tema, cores e toggles aplicados na hora).
     let _ = app.emit("settings:changed", ());
     Ok(warnings)

@@ -1028,6 +1028,102 @@ controles ficam alinhados à direita, como as demais linhas.
 `cargo test --lib` **62/62** (novo: `fundo_personalizado_e_saneado`) ·
 `cargo clippy --all-targets` 0 · `npx tsc --noEmit` 0.
 
+### 8.62 Mexer nas configurações travava o app (v0.1.47)
+
+Sintoma do usuário: "mudar a transparência ou mexer nas configs faz ele quebrar e
+travar".
+
+#### A conta: 1,1 s por gravação
+
+`save_settings` chamava `apply_settings`, que fazia **tudo** a cada gravação:
+registrar os atalhos globais de novo, `schtasks` (autostart) e `reg` (ler e
+escrever o `DisabledHotkeys` do Win+V). Cada um desses **abre um processo**.
+
+Medido com `_ref/teste_custo_config.py` (ida e volta do IPC, build de depuração):
+
+| Mudança | Antes | Depois |
+|---|---|---|
+| opacidade, 20 gravações | 1119–1253 ms cada (**23,1 s**) | 3,3–11,1 ms (**0,10 s**) |
+| cor de fundo, 12 | 1125–1233 ms (14,0 s) | 2,6–7,1 ms (0,05 s) |
+| idioma, 6 | 1148–1218 ms (7,0 s) | 2,9–58,5 ms (0,14 s) |
+| atalho global, 4 | 1116–1139 ms (4,5 s) | 4,4–5,0 ms (0,02 s) |
+
+Um slider dispara `onChange` a cada passo do mouse: com 1,1 s por chamada, a
+fila crescia sem parar e a janela parecia congelada (o Windows até marca "não
+está respondendo").
+
+#### O que mudou
+
+1. **Backend aplica só o que mudou** (`apply_settings(app, antes, cfg)`): atalhos
+   só se `show_hotkey`/`paste_hotkey` mudaram; `schtasks` só com
+   `launch_at_login`; `reg` só com `replace_win_v`; limite/retenção só com
+   `max_entries`/`retention_days`; backdrop só com `translucent`. `antes` é o
+   estado que estava valendo (`None` na abertura, que aplica tudo).
+2. **Frontend grava com debounce de 220 ms** (`SettingsPage`): o `setCfg` local
+   pinta na hora, mas o `save_settings` sai uma vez só, 220 ms depois do último
+   movimento. `system_status` (mais 3 processos) só é relido quando a mudança
+   mexe em algo do Windows.
+3. **Log de tempo**: `settings saved in N ms` — acima de ~100 ms é sinal de que
+   algum passo caro voltou a rodar sem necessidade.
+
+### 8.63 O translúcido "bem fraquinho": dois véus somados (v0.1.47)
+
+#### O defeito
+
+O app pedia o desfoque **duas vezes para o mesmo efeito**:
+`DWMWA_SYSTEMBACKDROP_TYPE = Mica` **e** o `SetWindowCompositionAttribute`
+legado com um véu de 33% de opacidade. Os dois se somam, e o CSS ainda punha
+72% por cima:
+
+```
+1 - (1 - 0,72) × (1 - 0,33) = 0,81  ->  sobravam ~19% do desfoque
+```
+
+Além disso o Mica **não** desfoca o que está atrás: ele amostra o **papel de
+parede**. Com o navegador atrás da janela o efeito simplesmente não aparece.
+
+#### O que ficou
+
+Um mecanismo só: `DwmExtendFrameIntoClientArea(-1)` + `DWMWA_SYSTEMBACKDROP_TYPE
+= 3` (`DWMSBT_TRANSIENTWINDOW`, o **acrílico**, que desfoca o que está de fato
+debocho da janela) e **nenhum** véu extra — a cor e a transparência vêm do CSS,
+que é o que o usuário controla. O caminho legado ficou só como plano B para
+build do Windows 11 que não aceite o atributo.
+
+O padrão da opacidade passou a **0,55** (era 1,0) e o `schema` foi para **2**:
+quem já tinha `bgOpacity: 1` salvo ficaria preso no sólido e não veria efeito
+nenhum.
+
+#### Medições
+
+**Transferência com um fundo branco atrás** (`_ref/teste_translucido.py`,
+luminância média de uma faixa; DWM `DWMWA_SYSTEMBACKDROP_TYPE = 3`):
+
+| Opção | Luminância |
+|---|---|
+| sólido (1,00) | **23,6** |
+| padrão (0,55) | **51,4** |
+| máximo (0,35) | **63,7** |
+
+O degrau de 0 → 0,55 vale **+27,8** de luminância: o efeito existe e é grande —
+antes, o "1,00" do controle ainda caía no 0,55 do tema e a escala não fazia
+sentido no fim.
+
+**Desfoca ou só fica transparente?** (`_ref/teste_blur_padrao.py`: fundo de
+listras pretas/brancas de 10 px atrás da janela, interface escondida para a
+captura ser só o vidro; desvio-padrão mede se as listras aparecem):
+
+| Mecanismo | Média | Desvio | Veredito |
+|---|---|---|---|
+| acrílico do DWM (o que ficou) | 63,0 | **3,4** | listras somem: desfoca |
+| acrílico legado (`ACCENT_ENABLE_ACRYLICBLURBEHIND`) | 23,6 | **30,4** | listras aparecem: só transparência |
+
+Esse é o motivo de o caminho legado não ser o principal: ele deixa a janela
+vazar o que está atrás sem desfocar nada (e com véu escuro de 33% foi o que
+originou o "fraquinho").
+
+`cargo test --lib` **62/62** · `cargo clippy --all-targets` 0 · `npx tsc --noEmit` 0.
+
 ### 8.58 Filtro "Somente vídeos" e a prévia duplicada do vídeo (v0.1.44)
 
 Dois ajustes que o usuário pediu depois de abrir um `.mp4` no app.

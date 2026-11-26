@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 /// Versão atual do arquivo de configuração (ver `Settings::migrate`).
-const SCHEMA: u32 = 1;
+const SCHEMA: u32 = 2;
 
 /// Atalhos usados dentro da janela (não globais). Formato: "Ctrl+K".
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -142,7 +142,7 @@ impl Default for Settings {
             accent: "#4FA3F8".into(),
             translucent: true,
             bg_color: String::new(),
-            bg_opacity: 1.0,
+            bg_opacity: 0.55,
             in_app_keys: InAppKeys::default(),
             language: "en".into(),
             auto_update_check: true,
@@ -165,7 +165,7 @@ impl Settings {
                 && cor[1..].chars().all(|c| c.is_ascii_hexdigit()));
         self.bg_color = if valida { cor } else { String::new() };
         if !self.bg_opacity.is_finite() {
-            self.bg_opacity = 1.0;
+            self.bg_opacity = 0.55;
         }
         self.bg_opacity = self.bg_opacity.clamp(0.35, 1.0);
     }
@@ -175,6 +175,13 @@ impl Settings {
         if self.schema < 1 {
             self.hover_preview = false;
             self.schema = 1;
+        }
+        // v2 (0.1.47): o fundo passou a nascer em 55% de opacidade — com o
+        // desfoque consertado, 100% deixa a janela opaca e "sem" translúcido.
+        // Quem já tem o arquivo salvo com 1.0 ficaria preso no sólido.
+        if self.schema < 2 {
+            self.bg_opacity = 0.55;
+            self.schema = 2;
         }
         if self
             .in_app_keys
@@ -268,7 +275,7 @@ mod testes {
     fn fundo_personalizado_e_saneado() {
         let mut cfg = Settings::default();
         assert_eq!(cfg.bg_color, "");
-        assert!((cfg.bg_opacity - 1.0).abs() < f64::EPSILON);
+        assert!((cfg.bg_opacity - 0.55).abs() < f64::EPSILON);
         cfg.bg_color = "  #1a1a1a ".into();
         cfg.bg_opacity = 0.0;
         cfg = cfg.sanitized();
@@ -283,6 +290,17 @@ mod testes {
         let ruim = ruim.sanitized();
         assert_eq!(ruim.bg_color, "");
         assert!((ruim.bg_opacity - 1.0).abs() < f64::EPSILON);
+
+        // settings.json antigo (opacidade 1.0 gravada) migra para 55%: era o
+        // valor que deixava a janela opaca depois do conserto do desfoque.
+        let mut velho = Settings {
+            bg_opacity: 1.0,
+            schema: 1,
+            ..Settings::default()
+        };
+        velho.migrate();
+        assert!((velho.bg_opacity - 0.55).abs() < f64::EPSILON);
+        assert_eq!(velho.schema, 2);
     }
 
     #[test]

@@ -14,6 +14,15 @@ import {
 import { LANGUAGES, type Lang, type T } from "../lib/i18n";
 import { formatBytes } from "../lib/format";
 
+/** Campos cuja mudança pede reler `system_status` (coisa do Windows). */
+const campoDoSistema: (keyof Settings)[] = [
+  "translucent",
+  "replaceWinV",
+  "launchAtLogin",
+  "captureSensitive",
+  "offlineMode",
+];
+
 type Section =
   | "preferences"
   | "shortcuts"
@@ -305,12 +314,28 @@ export function SettingsPage({
     return aviso.replace(/HotKey \{[^}]*\}/g, t("shortcut unavailable")).trim();
   };
 
-  const update = async (patch: Partial<Settings>) => {
-    if (!cfg) return;
+  /**
+   * Gravação **com debounce**.
+   *
+   * A interface aplica a mudança na hora (o `setCfg` local pinta tudo), mas o
+   * `save_settings` só sai 220 ms depois do último movimento. Sem isso, um
+   * slider de transparência disparava uma gravação por passo do mouse: cada uma
+   * custava ~1,1 s (o backend re-registrava atalhos globais, chamava `schtasks`
+   * e `reg`) e a janela parecia travada.
+   */
+  const pendente = useRef<Settings | null>(null);
+  const timer = useRef<number | null>(null);
+  const pedeStatus = useRef(false);
+
+  const efetivar = async () => {
+    if (timer.current !== null) {
+      window.clearTimeout(timer.current);
+      timer.current = null;
+    }
+    const next = pendente.current;
+    pendente.current = null;
+    if (!next) return;
     const seq = ++saveSeq.current;
-    const next = { ...cfg, ...patch };
-    setCfg(next);
-    onChange?.(next);
     try {
       const warnings = await api.saveSettings(next);
       if (seq !== saveSeq.current) return;
@@ -318,10 +343,15 @@ export function SettingsPage({
       if (seq !== saveSeq.current) return;
       setCfg(applied);
       onChange?.(applied);
-      // force: o cache do backend tem 30 s e aqui o valor acabou de mudar.
-      const status = await api.systemStatus(true);
-      if (seq !== saveSeq.current) return;
-      setSys(status);
+      // `system_status` (transparência do Windows, Win+V, autostart) só é
+      // relido quando a mudança pode ter mexido nele — antes era uma ida e
+      // volta extra em toda tecla digitada.
+      if (pedeStatus.current) {
+        pedeStatus.current = false;
+        const status = await api.systemStatus(true);
+        if (seq !== saveSeq.current) return;
+        setSys(status);
+      }
       const msg = warnings.length
         ? t("Saved with warnings: {list}", { list: warnings.map(warningText).join(" · ") })
         : t("Settings saved");
@@ -336,6 +366,26 @@ export function SettingsPage({
       onSaved(msg, "err");
     }
   };
+
+  const update = (patch: Partial<Settings>) => {
+    if (!cfg) return;
+    const next = { ...cfg, ...patch };
+    setCfg(next);
+    onChange?.(next);
+    pendente.current = next;
+    if (campoDoSistema.some((k) => k in patch)) pedeStatus.current = true;
+    if (timer.current !== null) window.clearTimeout(timer.current);
+    timer.current = window.setTimeout(() => void efetivar(), 220);
+  };
+
+  // Sair da página (ou da janela) não pode descartar o que ainda está pendente.
+  useEffect(
+    () => () => {
+      if (pendente.current) void efetivar();
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    []
+  );
 
   const { recording, setRecording } = useRecorder((accel) => {
     if (!cfg) return;
@@ -561,14 +611,16 @@ export function SettingsPage({
                   min={0}
                   max={65}
                   step={5}
-                  value={Math.round((1 - cfg.bgOpacity) * 100)}
+                  // Sem "janela translúcida" não existe transparência (só vidro
+                  // sem desfoque), então o controle mostra 0%.
+                  value={cfg.translucent ? Math.round((1 - cfg.bgOpacity) * 100) : 0}
                   onChange={(e) =>
                     void update({ bgOpacity: 1 - Number(e.target.value) / 100 })
                   }
                   aria-label={t("Background transparency")}
                 />
                 <span className="slider-value">
-                  {Math.round((1 - cfg.bgOpacity) * 100)}%
+                  {cfg.translucent ? Math.round((1 - cfg.bgOpacity) * 100) : 0}%
                 </span>
               </div>
             </Field>

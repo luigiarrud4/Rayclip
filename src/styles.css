@@ -1877,21 +1877,31 @@ html[data-theme="rose"] {
   }
 }
 
-/* ---- fundo translúcido (Mica do Windows 11) --------------------------- */
+/* ---- fundo translúcido (acrílico do Windows 11) -----------------------
+   O alfa daqui é TUDO que separa o desfoque do fundo: o backend só liga o
+   acrílico atrás da janela (um mecanismo só, sem véu extra). Com 0,72 — o
+   valor antigo, somado a um véu de 0,33 do accent policy legado — sobravam
+   ~19% de desfoque: o efeito parecia não existir. O slider de transparência
+   das Preferências reescreve estes dois valores inline. */
 html[data-translucency="on"] {
-  --window-bg: rgb(10 10 12 / 0.72);
+  --window-bg: rgb(10 10 12 / 0.55);
+  --page-bg: rgb(10 10 12 / 0.62);
 }
 html[data-translucency="on"][data-theme="midnight"] {
-  --window-bg: rgb(11 18 36 / 0.72);
+  --window-bg: rgb(11 18 36 / 0.55);
+  --page-bg: rgb(11 18 36 / 0.62);
 }
 html[data-translucency="on"][data-theme="nord"] {
-  --window-bg: rgb(46 52 64 / 0.74);
+  --window-bg: rgb(46 52 64 / 0.58);
+  --page-bg: rgb(46 52 64 / 0.65);
 }
 html[data-translucency="on"][data-theme="rose"] {
-  --window-bg: rgb(27 16 22 / 0.74);
+  --window-bg: rgb(27 16 22 / 0.58);
+  --page-bg: rgb(27 16 22 / 0.65);
 }
 html[data-translucency="on"][data-theme="light"] {
-  --window-bg: rgb(248 249 251 / 0.72);
+  --window-bg: rgb(248 249 251 / 0.62);
+  --page-bg: rgb(248 249 251 / 0.70);
 }
 
 /* ---- ícone e nome do app de origem (linha "Source") ------------------- */

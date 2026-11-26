@@ -63,7 +63,12 @@ export function applyTheme(
   root.dataset.theme = theme;
   // Translúcido (Mica) é o padrão; "off" pinta um fundo sólido.
   root.dataset.translucency = cfg?.translucent !== false && osTransparency ? "on" : "off";
-  aplicarFundo(root, cfg?.bgColor, cfg?.bgOpacity);
+  aplicarFundo(
+    root,
+    cfg?.bgColor,
+    cfg?.bgOpacity,
+    cfg?.translucent !== false && osTransparency
+  );
   const accent = (cfg?.accent || "#4fa3f8").trim();
   root.style.setProperty("--accent", accent);
   // sombra/realce derivados do destaque escolhido
@@ -80,13 +85,19 @@ export function applyTheme(
 function aplicarFundo(
   root: HTMLElement,
   cor: string | undefined,
-  opacidade: number | undefined
+  opacidade: number | undefined,
+  translucido: boolean
 ) {
   root.style.removeProperty("--window-bg");
   root.style.removeProperty("--page-bg");
-  const alfa = typeof opacidade === "number" && opacidade > 0 ? opacidade : 1;
+  // Sem o desfoque ligado não existe transparência: a janela vira um vidro
+  // sem blur (só o papel de parede cru aparecendo), que é feio e ilegível.
+  const alfa = translucido ? (typeof opacidade === "number" && opacidade > 0 ? opacidade : 1) : 1;
   const corLimpa = (cor || "").trim();
-  if (!(corLimpa.length === 7 || alfa < 0.999)) return;
+  // Com o desfoque ligado o alfa vem **sempre** do controle do usuário: se ele
+  // põe 100%, a janela é sólida de verdade (antes caía no 0,55 do tema e o
+  // controle não fazia sentido no fim da escala).
+  if (!(corLimpa.length === 7 || translucido)) return;
   const estilo = getComputedStyle(root);
   const base = rgbDe(corLimpa) ||
     rgbDe(estilo.getPropertyValue("--window-bg")) || { r: 10, g: 10, b: 12 };
