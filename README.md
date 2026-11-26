@@ -513,6 +513,17 @@ copiou, então se o gerenciador não publicar o marcador o conteúdo entra no
 histórico dele. A decisão fica nossa, de propósito, e o interruptor "Also capture
 passwords & protected content" desliga o filtro quando você quiser.
 
+### Novidades da v0.1.55 — a faixa de cima virou um puxador visível
+
+- Pergunta do usuário: por que não usar no topo o que a barra de baixo faz? Medido:
+  **já era o mesmo mecanismo** (`data-tauri-drag-region`), com o mesmo
+  deslocamento (48 px nos dois). A diferença era só o tamanho.
+- A faixa de cima passou a **22 px**, com o **ícone de clipboard em laranja** e
+  `title` traduzido — dá para ver onde pegar, e ela cobre a área onde o fantasma
+  da legenda ainda podia aparecer.
+- Aproveitei: as duas frases soltas do painel de detalhes agora estão traduzidas
+  (0 sem tradução em 308 usos de `t()`).
+
 ### Novidades da v0.1.54 — o ícone no canto era ordem de chamada
 
 - A faixa clara com o **ícone do app** no canto vinha de dois erros nossos:

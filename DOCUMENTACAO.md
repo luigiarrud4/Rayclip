@@ -8,11 +8,11 @@ dele é usado; só o resultado visual e funcional foi reproduzido.
 
 - Pasta do projeto: `C:\Users\Lugia\Projects\rayclip`
 - Stack: **Tauri v2 (Rust) + React + TypeScript + WebView2**
-- Versão atual: **0.1.54**
+- Versão atual: **0.1.55**
 - Binário: `src-tauri/target/release/rayclip.exe` (11.160.576 B, SHA256
-  `a38a280cf555fc875e8f38fbb11b8bb4986b61b7a69c907e8c6eb0408f1c90ea`)
-- Instalador: `src-tauri/target/release/bundle/nsis/Rayclip_0.1.54_x64-setup.exe`
-  (3.823.870 B)
+  `3809670de37303e5de8db949e4b601a710043a8093c188380b3d2618174a8035`)
+- Instalador: `src-tauri/target/release/bundle/nsis/Rayclip_0.1.55_x64-setup.exe`
+  (3.823.562 B)
 
 Este documento explica **o que o app faz, como é feito por dentro e como cada
 problema difícil foi resolvido** (com a medição usada para provar).
@@ -3767,3 +3767,26 @@ Duas coisas, ambas no nosso código:
   topo a cada 120 ms): luminância **25,4 constante**, sem nenhuma faixa clara. O
   `Win+V` sintético não abre o app nesta máquina (o gancho do shell é quem abre),
   então esse caminho continua dependendo do teste do usuário.
+
+### 8.71 "Por que não usar no topo o que a barra de baixo faz?" (v0.1.55)
+
+Pergunta do usuário. Resposta medida primeiro: **já era a mesma coisa**. O rodapé
+e a faixa de cima usam o mesmo `data-tauri-drag-region`, e o arrasto sintético
+deu o **mesmo deslocamento** nos dois — 48 px pela faixa de cima e 48 px pelo
+rodapé. O que diferia era só o tamanho: 16 px invisíveis contra os ~34 px do
+rodapé, com ícone.
+
+O que mudou:
+
+- A faixa de cima passou a ter **22 px**, com o **ícone de clipboard em laranja**
+  à esquerda (mesmo glifo do rodapé, opacidade 0.5 que sobe para 0.9 no hover) e
+  `title` traduzido ("Arraste para mover a janela").
+- Ela também cobre a área onde o fantasma da legenda ainda conseguia aparecer.
+
+Medido: altura **22 px** no DOM, ícone presente (`32` pixels laranja na captura
+da faixa), `title` em português, arrasto pela faixa move **36 px**, e a lista
+começa em y=63 (antes 57 — 6 px a mais de faixa).
+
+Aproveitei para traduzir duas frases soltas do painel de detalhes que o
+`check_i18n.py` acusava ("This format cannot be played here", "Muted by
+default"): agora **0 sem tradução** em 308 usos de `t()`.
