@@ -513,6 +513,17 @@ copiou, então se o gerenciador não publicar o marcador o conteúdo entra no
 histórico dele. A decisão fica nossa, de propósito, e o interruptor "Also capture
 passwords & protected content" desliga o filtro quando você quiser.
 
+### Novidades da v0.1.58 — multi-select de imagens colava a mesma duas vezes
+
+- O nome do arquivo materializado em `drag/` era `Rayclip image <data-hora até o
+  segundo>`: **duas imagens copiadas no mesmo segundo davam o mesmo nome**, e o
+  caminho rápido (`is_file()`) devolvia o arquivo da primeira. O `CF_HDROP` saía
+  com dois caminhos iguais e o destino colava a mesma imagem duas vezes.
+- Agora o nome leva os **8 primeiros caracteres do id** da entrada — único e ainda
+  legível. Vale também para arrastar duas imagens para fora.
+- Provado por dois testes novos (64 no total) e por um teste de ponta a ponta que
+  lê o `CF_HDROP` do clipboard: dois arquivos, `76118` e `262682` bytes.
+
 ### Novidades da v0.1.57 — encerrado, e a faixa do topo sem ícone
 
 - **A barra clássica está resolvida** (confirmado pelo usuário na v0.1.56). O que

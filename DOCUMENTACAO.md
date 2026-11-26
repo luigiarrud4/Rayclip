@@ -8,11 +8,11 @@ dele é usado; só o resultado visual e funcional foi reproduzido.
 
 - Pasta do projeto: `C:\Users\Lugia\Projects\rayclip`
 - Stack: **Tauri v2 (Rust) + React + TypeScript + WebView2**
-- Versão atual: **0.1.57**
-- Binário: `src-tauri/target/release/rayclip.exe` (11.160.576 B, SHA256
-  `2046bb4f00aad1e5d06ee33c57e08e133753270d8370cfdf1a46452fdc7423c0`)
-- Instalador: `src-tauri/target/release/bundle/nsis/Rayclip_0.1.57_x64-setup.exe`
-  (3.822.338 B)
+- Versão atual: **0.1.58**
+- Binário: `src-tauri/target/release/rayclip.exe` (11.161.088 B, SHA256
+  `f7c9d1c17573c35da348ac73c5cb40ec7672288806f7edb4de5be5d73d03e4eb`)
+- Instalador: `src-tauri/target/release/bundle/nsis/Rayclip_0.1.58_x64-setup.exe`
+  (3.823.636 B)
 
 Este documento explica **o que o app faz, como é feito por dentro e como cada
 problema difícil foi resolvido** (com a medição usada para provar).
@@ -3873,3 +3873,62 @@ mantendo **22 px** de área para pegar com o mouse e o `title`
 salva o quadro quando vê banda clara uniforme atravessando a largura e informa
 **qual janela está naquele pixel** (`WindowFromPoint`, classe + pid). Se algum dia
 voltar, o primeiro passo é rodar isso, não supor.
+
+### 8.74 Multi-select de imagens colava a mesma duas vezes (v0.1.58)
+
+Relato do usuário: *"quando tento pegar duas imagens diferentes e colar ele
+simplesmente cola a mesma imagem duas vezes"*.
+
+#### Causa, no código
+
+Seleção só de imagem/arquivo vai por `paste_files`, que monta **um** `CF_HDROP`
+com os caminhos de todas as entradas (uma escrita, uma colagem — §8.30). Cada
+entrada de imagem existe só dentro do banco cifrado, então é **materializada** em
+`<dados>/drag/` por `arquivos_da_entrada`, e o nome vinha de `drag_file_stem`:
+
+```rust
+// imagem copiada: "Rayclip image <data-hora até o segundo>"
+format!("Rayclip image {}", chrono_label())
+```
+
+Duas imagens diferentes copiadas **no mesmo segundo** davam o **mesmo nome**. E
+havia um caminho rápido que reusava o arquivo existente:
+
+```rust
+let pronto = pasta.join(format!("{}.{}", drag_file_stem(entry), ext));
+if pronto.is_file() {
+    return Ok(vec![pronto]);          // <- devolvia o arquivo da OUTRA imagem
+}
+```
+
+Resultado: o `CF_HDROP` saía com **dois caminhos iguais** e o app de destino
+colava a mesma imagem duas vezes. O mesmo valia para arrastar duas imagens para
+fora.
+
+#### Correção
+
+Novo `nome_materializado(entry, id)`: o nome ganhou os **8 primeiros caracteres
+alfanuméricos do id** (uuid v4), então é único por entrada e continua legível
+(`Rayclip image 2026-11-26 16-19-45 e9c16c56.png`). O caminho rápido passou a usar
+esse nome, e o arquivo escrito depois usa **o mesmo** — antes ele usava
+`payload.name`, que reintroduzia a colisão.
+
+#### Provas
+
+- Teste unitário determinístico `nome_materializado_separa_pelo_id`: dois ids
+  diferentes → dois nomes diferentes, com o id dentro.
+- Teste de integração `duas_imagens_no_mesmo_segundo_nao_compartilham_arquivo`:
+  duas entradas de imagem, dois arquivos, cada um com os seus bytes.
+- Ponta a ponta com o app real (`_ref/teste_multisselecao_imagens.py`): chama
+  `paste_files` pelo IPC com dois ids de imagem de conteúdo diferente e **lê o
+  `CF_HDROP`** do clipboard. Na 0.1.58 instalada:
+
+```
+CF_HDROP (2):
+   ...\drag\Rayclip image 2026-11-26 16-19-45 e9c16c56.png
+   ...\drag\Rayclip image 2026-11-26 16-19-45 f02522d0.png
+RESULTADO: OK - dois arquivos diferentes
+bytes: 76118 e 262682 | iguais: False
+```
+
+`cargo test --lib` passou a **64** testes.

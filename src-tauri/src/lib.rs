@@ -1723,11 +1723,7 @@ fn arquivos_da_entrada(
     std::fs::create_dir_all(&pasta).map_err(|e| e.to_string())?;
     // Nome barato antes de encodar: o hover chama isto a cada passada do mouse e
     // reencodar a imagem só para descobrir que o arquivo já existe é desperdício.
-    let pronto = pasta.join(format!(
-        "{}.{}",
-        drag_file_stem(entry),
-        normalize_ext("", entry)
-    ));
+    let pronto = pasta.join(nome_materializado(entry, id));
     if pronto.is_file() {
         return Ok(vec![pronto]);
     }
@@ -1735,7 +1731,9 @@ fn arquivos_da_entrada(
     let Some(bytes) = b64_decode(&payload.data) else {
         return Err("could not prepare the file".into());
     };
-    let alvo = pasta.join(&payload.name);
+    // **O mesmo** nome do caminho rápido: `payload.name` sozinho não é único (ver
+    // `nome_materializado`), e escrever nele reintroduzia a colisão.
+    let alvo = pronto;
     if !alvo.is_file() {
         std::fs::write(&alvo, &bytes).map_err(|e| e.to_string())?;
     }
@@ -2117,6 +2115,31 @@ fn drag_file_stem(entry: &crate::store::Entry) -> String {
         }
     }
     file_stem(entry, 1)
+}
+
+/// Nome do arquivo que materializa uma entrada em `<dados>/drag/`.
+///
+/// **O id entra no nome** porque o nome sozinho não é único: imagem copiada usa
+/// `Rayclip image <data-hora até o segundo>`, então **duas imagens diferentes
+/// copiadas no mesmo segundo geravam o mesmo nome**. A segunda encontrava o
+/// arquivo da primeira já pronto no caminho rápido (`is_file()`) e devolvia o
+/// caminho dela — era isso que fazia escolher duas imagens diferentes no
+/// multi-select e colar **a mesma duas vezes**: um único `CF_HDROP` com dois
+/// caminhos iguais. Os 8 primeiros caracteres alfanuméricos do id (uuid v4)
+/// bastam para separar, e o nome continua legível.
+fn nome_materializado(entry: &crate::store::Entry, id: &str) -> String {
+    let curto: String = id
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .take(8)
+        .collect();
+    let stem = drag_file_stem(entry);
+    let ext = normalize_ext("", entry);
+    if curto.is_empty() {
+        format!("{stem}.{ext}")
+    } else {
+        format!("{stem} {curto}.{ext}")
+    }
 }
 
 /// Nome de arquivo seguro derivado da entrada.
@@ -4233,6 +4256,63 @@ mod arrasto {
     }
 
     /// Entry mínimo para os testes (o resto dos campos tem `default`).
+    /// Duas imagens diferentes escolhidas juntas colavam a **mesma** duas vezes.
+    ///
+    /// O nome do arquivo materializado era `Rayclip image <data-hora até o
+    /// segundo>`: duas imagens copiadas no mesmo segundo davam o mesmo nome, e a
+    /// segunda reusava o arquivo da primeira (`is_file()`). Aqui são duas
+    /// entradas com esse nome idêntico e ids diferentes — precisam virar dois
+    /// arquivos, cada um com os seus bytes.
+    /// Versão determinística: mesmo nome-base (mesmo segundo), ids diferentes.
+    #[test]
+    fn nome_materializado_separa_pelo_id() {
+        let mut a = entry_vazio("image", "");
+        a.has_image = true;
+        let n1 = nome_materializado(&a, "11111111-2222-3333-4444-555555555555");
+        let n2 = nome_materializado(&a, "99999999-8888-7777-6666-555555555555");
+        assert_ne!(n1, n2, "dois ids precisam dar dois nomes: {n1}");
+        assert!(n1.contains("11111111"), "nome sem o id: {n1}");
+        assert!(n1.ends_with(".png"), "extensao errada: {n1}");
+    }
+
+    #[test]
+    fn duas_imagens_no_mesmo_segundo_nao_compartilham_arquivo() {
+        let dir = std::env::temp_dir().join("rayclip-teste-drag-unicos");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let mut a = entry_vazio("image", "");
+        a.has_image = true;
+        let mut b = entry_vazio("image", "");
+        b.has_image = true;
+
+        let png_a: &[u8] = b"\x89PNG\r\n\x1a\nIMAGEM-A";
+        let png_b: &[u8] = b"\x89PNG\r\n\x1a\nIMAGEM-B";
+        let pa = arquivos_da_entrada(
+            &a,
+            Some(png_a.to_vec()),
+            &dir,
+            "11111111-2222-3333-4444-555555555555",
+        )
+        .unwrap();
+        let pb = arquivos_da_entrada(
+            &b,
+            Some(png_b.to_vec()),
+            &dir,
+            "99999999-8888-7777-6666-555555555555",
+        )
+        .unwrap();
+
+        assert_ne!(
+            pa[0], pb[0],
+            "duas imagens diferentes viraram o mesmo arquivo: {:?}",
+            pa[0]
+        );
+        assert_eq!(std::fs::read(&pa[0]).unwrap(), png_a);
+        assert_eq!(std::fs::read(&pb[0]).unwrap(), png_b);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     fn entry_vazio(kind: &str, texto: &str) -> crate::store::Entry {
         crate::store::Entry {
             id: "teste".into(),
