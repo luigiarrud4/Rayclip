@@ -62,11 +62,16 @@ def fundo_branco():
     cb = WNDPROC(proc)
     wc = WNDCLASSW()
     wc.lpfnWndProc = cb
-    wc.hInstance = kernel32.GetModuleHandleW(None)
+    kernel32.GetModuleHandleW.restype = ctypes.c_void_p
+    wc.hInstance = kernel32.GetModuleHandleW(None) or 0
     wc.lpszClassName = "RayclipFundoBranco"
     wc.hbrBackground = gdi32.CreateSolidBrush(0xFFFFFF)
     user32.RegisterClassW(ctypes.byref(wc))
     user32.CreateWindowExW.restype = w.HWND
+    user32.CreateWindowExW.argtypes = [
+        w.DWORD, w.LPCWSTR, w.LPCWSTR, w.DWORD, ctypes.c_int, ctypes.c_int,
+        ctypes.c_int, ctypes.c_int, w.HWND, w.HMENU, ctypes.c_void_p, ctypes.c_void_p,
+    ]
     hwnd = user32.CreateWindowExW(
         WS_EX_NOACTIVATE, "RayclipFundoBranco", "", WS_POPUP | WS_VISIBLE, 0, 0, 1920, 1080,
         None, None, wc.hInstance, None,

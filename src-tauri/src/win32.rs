@@ -582,7 +582,8 @@ unsafe extern "system" fn moldura_proc(
     _data: usize,
 ) -> isize {
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        WM_DWMCOMPOSITIONCHANGED, WM_NCACTIVATE, WM_NCPAINT, WM_STYLECHANGED, WM_THEMECHANGED,
+        WM_DWMCOMPOSITIONCHANGED, WM_GETMINMAXINFO, WM_NCACTIVATE, WM_NCHITTEST, WM_NCPAINT,
+        WM_STYLECHANGED, WM_THEMECHANGED,
     };
     // Mensagens **não documentadas** que o Windows manda para quem desenha a
     // legenda no caminho clássico (o mesmo que o "Aero glass" usa quando a
@@ -593,6 +594,53 @@ unsafe extern "system" fn moldura_proc(
     const WM_NCUAHDRAWFRAME: u32 = 0x00AF;
     match msg {
         WM_NCPAINT => 0,
+        // Sem `WS_CAPTION` não há moldura para pegar: quem sabe onde ficam as
+        // bordas agora somos nós. Devolver `HTLEFT`/`HTTOPLEFT`/... faz o
+        // próprio Windows mostrar a seta de redimensionar (a "cruz" nos cantos)
+        // e conduzir o arrasto.
+        // Sem `WS_CAPTION`, o Windows deixa de descontar a barra de tarefas ao
+        // maximizar (medido: 1934x1094 numa tela de 1080, cobrindo a barra). O
+        // lugar certo de corrigir isso é aqui: a área máxima passa a ser a área
+        // de trabalho do monitor onde a janela está.
+        WM_GETMINMAXINFO => {
+            let mmi = lp as *mut windows_sys::Win32::UI::WindowsAndMessaging::MINMAXINFO;
+            if mmi.is_null() {
+                return DefSubclassProc(hwnd, msg, wp, lp);
+            }
+            use windows_sys::Win32::Graphics::Gdi::{
+                GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+            };
+            let mut mi = MONITORINFO {
+                cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+                rcMonitor: windows_sys::Win32::Foundation::RECT {
+                    left: 0,
+                    top: 0,
+                    right: 0,
+                    bottom: 0,
+                },
+                rcWork: windows_sys::Win32::Foundation::RECT {
+                    left: 0,
+                    top: 0,
+                    right: 0,
+                    bottom: 0,
+                },
+                dwFlags: 0,
+            };
+            let mon = unsafe { MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST) };
+            if !mon.is_null() && unsafe { GetMonitorInfoW(mon, &mut mi) } != 0 {
+                unsafe {
+                    (*mmi).ptMaxPosition.x = mi.rcWork.left - mi.rcMonitor.left;
+                    (*mmi).ptMaxPosition.y = mi.rcWork.top - mi.rcMonitor.top;
+                    (*mmi).ptMaxSize.x = mi.rcWork.right - mi.rcWork.left;
+                    (*mmi).ptMaxSize.y = mi.rcWork.bottom - mi.rcWork.top;
+                }
+            }
+            0
+        }
+        WM_NCHITTEST => match borda_de_resize(hwnd) {
+            0 => DefSubclassProc(hwnd, msg, wp, lp),
+            ht => ht,
+        },
         // `WM_NCCALCSIZE` **não** é interceptado de propósito: o tao responde
         // 0 para janela sem moldura, mas também encolhe a janela maximizada
         // para não cobrir a barra de tarefas — devolver 0 aqui jogaria isso
@@ -607,6 +655,10 @@ unsafe extern "system" fn moldura_proc(
             // composição acontece na ativação: pedir aqui, na hora, é o que
             // evita a legenda. Em segundo plano chega tarde.
             politica_dwm(hwnd as isize);
+            // O tao repõe `WS_CAPTION` quando reaplica os estilos (maximizar,
+            // sempre-no-topo, mostrar). Como a ativação sempre vem antes da
+            // composição, é aqui que o bit é arrancado de novo.
+            tira_legenda(hwnd as isize);
             // O tao precisa da mensagem (ele marca `set_active` e dispara
             // ganho/perda de foco); o resultado dele é descartado.
             let _ = DefSubclassProc(hwnd, msg, wp, lp);
@@ -628,6 +680,7 @@ unsafe extern "system" fn moldura_proc(
             crate::log("moldura: REAFIRMA");
             REAFIRMA_PENDENTE.store(false, std::sync::atomic::Ordering::Relaxed);
             politica_dwm(hwnd as isize);
+            tira_legenda(hwnd as isize);
             // Re-apegar a moldura (`SWP_FRAMECHANGED`) faz o DWM pintar de 1 a
             // 3 quadros de legenda clássica — é o piscar que o usuário ainda
             // via na v0.1.51. Aqui ele só roda se a faixa estiver errada; o
@@ -653,6 +706,78 @@ unsafe extern "system" fn moldura_proc(
         }
         _ => DefSubclassProc(hwnd, msg, wp, lp),
     }
+}
+
+/// Código de `WM_NCHITTEST` para o ponto do cursor, ou `0` se é conteúdo.
+///
+/// A faixa é medida em pixels **físicos**, escalada pelo DPI da janela: 8 px nas
+/// bordas e 14 px nos cantos (o canto precisa de mais área para acertar a
+/// diagonal).
+fn borda_de_resize(hwnd: HWND) -> isize {
+    use windows_sys::Win32::Foundation::POINT;
+    use windows_sys::Win32::UI::WindowsAndMessaging::GetClientRect;
+    #[link(name = "user32")]
+    extern "system" {
+        fn GetDpiForWindow(hwnd: HWND) -> u32;
+    }
+    const HTLEFT: isize = 10;
+    const HTRIGHT: isize = 11;
+    const HTTOP: isize = 12;
+    const HTTOPLEFT: isize = 13;
+    const HTTOPRIGHT: isize = 14;
+    const HTBOTTOM: isize = 15;
+    const HTBOTTOMLEFT: isize = 16;
+    const HTBOTTOMRIGHT: isize = 17;
+    let mut p = POINT { x: 0, y: 0 };
+    let mut r = windows_sys::Win32::Foundation::RECT {
+        left: 0,
+        top: 0,
+        right: 0,
+        bottom: 0,
+    };
+    unsafe {
+        if GetCursorPos(&mut p) == 0 || GetClientRect(hwnd, &mut r) == 0 {
+            return 0;
+        }
+        if windows_sys::Win32::Graphics::Gdi::ScreenToClient(hwnd, &mut p) == 0 {
+            return 0;
+        }
+    }
+    let dpi = unsafe { GetDpiForWindow(hwnd) };
+    let escala = if dpi == 0 { 1.0 } else { dpi as f64 / 96.0 };
+    let borda = (8.0 * escala) as i32;
+    let canto = (14.0 * escala) as i32;
+    let (x, y, w, h) = (p.x, p.y, r.right, r.bottom);
+    let esq = x < borda;
+    let dir = x >= w - borda;
+    let cima = y < borda;
+    let baixo = y >= h - borda;
+    // Cantos primeiro: são diagonais e valem a área maior.
+    if (x < canto && y < canto) || (esq && cima) {
+        return HTTOPLEFT;
+    }
+    if (x >= w - canto && y < canto) || (dir && cima) {
+        return HTTOPRIGHT;
+    }
+    if (x < canto && y >= h - canto) || (esq && baixo) {
+        return HTBOTTOMLEFT;
+    }
+    if (x >= w - canto && y >= h - canto) || (dir && baixo) {
+        return HTBOTTOMRIGHT;
+    }
+    if esq {
+        return HTLEFT;
+    }
+    if dir {
+        return HTRIGHT;
+    }
+    if cima {
+        return HTTOP;
+    }
+    if baixo {
+        return HTBOTTOM;
+    }
+    0
 }
 
 static MOLDA_INSTALADA: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
@@ -731,6 +856,9 @@ pub fn sem_moldura(h: isize) -> i32 {
         return -1;
     }
     let hr = politica_dwm(h);
+    if tira_legenda(h) {
+        crate::log("moldura: WS_CAPTION arrancado do estilo");
+    }
     flush_dwm();
     // **Nunca** re-apegar a moldura (`SWP_FRAMECHANGED`) numa abertura normal: é
     // o re-apego que faz o DWM pintar 1-3 quadros de legenda clássica. Ele só
@@ -775,6 +903,32 @@ pub fn faixa_nc(h: isize) -> (i32, i32) {
     )
 }
 
+/// Arranca `WS_CAPTION` do estilo e **não devolve**.
+///
+/// É a versão estrutural: sem o bit, o tema clássico não tem onde desenhar a
+/// legenda, então nenhum quadro — nem o primeiro — pode mostrá-la. O
+/// redimensionamento passa a ser feito por nós, no `WM_NCHITTEST` (as setas de
+/// borda e a cruz nos cantos). Devolve `true` quando mudou algo.
+pub fn tira_legenda(h: isize) -> bool {
+    if h == 0 {
+        return false;
+    }
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos, GWL_STYLE, SWP_FRAMECHANGED,
+        SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOOWNERZORDER, SWP_NOSIZE, SWP_NOZORDER, WS_CAPTION,
+    };
+    const BASE: u32 = SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_NOACTIVATE;
+    unsafe {
+        let estilo = GetWindowLongPtrW(h as HWND, GWL_STYLE);
+        if estilo & (WS_CAPTION as isize) == 0 {
+            return false;
+        }
+        SetWindowLongPtrW(h as HWND, GWL_STYLE, estilo & !(WS_CAPTION as isize));
+        SetWindowPos(h as HWND, std::ptr::null_mut(), 0, 0, 0, 0, BASE | SWP_FRAMECHANGED);
+    }
+    true
+}
+
 /// Zera a faixa **sem** perder a alça de redimensionar.
 ///
 /// Medido: tirar `WS_CAPTION` faz o `WM_NCCALCSIZE` devolver a área cheia (é o
@@ -792,8 +946,6 @@ fn zera_faixa(h: isize) -> (i32, i32) {
         let estilo = GetWindowLongPtrW(h as HWND, GWL_STYLE);
         SetWindowLongPtrW(h as HWND, GWL_STYLE, estilo & !(WS_CAPTION as isize));
         SetWindowPos(h as HWND, std::ptr::null_mut(), 0, 0, 0, 0, BASE | SWP_FRAMECHANGED);
-        SetWindowLongPtrW(h as HWND, GWL_STYLE, estilo);
-        SetWindowPos(h as HWND, std::ptr::null_mut(), 0, 0, 0, 0, BASE);
     }
     faixa_nc(h)
 }

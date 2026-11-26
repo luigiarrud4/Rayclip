@@ -513,6 +513,20 @@ copiou, então se o gerenciador não publicar o marcador o conteúdo entra no
 histórico dele. A decisão fica nossa, de propósito, e o interruptor "Also capture
 passwords & protected content" desliga o filtro quando você quiser.
 
+### Novidades da v0.1.53 — sem `WS_CAPTION`: não há onde pintar a barra
+
+- Teste pedido pelo usuário: em vez de depender da moldura nativa, **tirar
+  `WS_CAPTION` do estilo de vez** e redimensionar por hit-test próprio (o padrão
+  de janelas borderless).
+- `WM_NCHITTEST` com 8 px de borda e 14 px de canto (escalados por DPI): as setas
+  de redimensionar e a **cruz** nos cantos aparecem sozinhas, e o arrasto é
+  conduzido pelo Windows. Medido: canto **+77 x +55 px**, cursor `IDC_SIZENWSE`.
+- Sem `WS_CAPTION` o maximizar passou a cobrir a barra de tarefas (1934x1094 numa
+  tela de 1080); corrigido com **`WM_GETMINMAXINFO`** limitando à área de
+  trabalho — agora **1920x1040**.
+- 6 aberturas + bandeja sem legenda, estado sabotado igual à referência, desfoque
+  e transparência intactos, abertura em **2,3 ms**.
+
 ### Novidades da v0.1.52 — o piscar era o nosso próprio re-apego da moldura
 
 - A barra aparecia e sumia rápido porque **éramos nós**: cada abertura mandava

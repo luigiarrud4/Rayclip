@@ -8,11 +8,11 @@ dele é usado; só o resultado visual e funcional foi reproduzido.
 
 - Pasta do projeto: `C:\Users\Lugia\Projects\rayclip`
 - Stack: **Tauri v2 (Rust) + React + TypeScript + WebView2**
-- Versão atual: **0.1.52**
-- Binário: `src-tauri/target/release/rayclip.exe` (11.159.040 B, SHA256
-  `f11fbfc752402806768a98a229f2f317aec39681848c86e42baa1dd6b95226f6`)
-- Instalador: `src-tauri/target/release/bundle/nsis/Rayclip_0.1.52_x64-setup.exe`
-  (3.823.274 B)
+- Versão atual: **0.1.53**
+- Binário: `src-tauri/target/release/rayclip.exe` (11.160.064 B, SHA256
+  `861c09eb3cc0444075cef60e4f029fbedd26f994f5f8fb491a756bd4a23ea436`)
+- Instalador: `src-tauri/target/release/bundle/nsis/Rayclip_0.1.53_x64-setup.exe`
+  (3.823.309 B)
 
 Este documento explica **o que o app faz, como é feito por dentro e como cada
 problema difícil foi resolvido** (com a medição usada para provar).
@@ -3678,3 +3678,49 @@ baixo. O que faltava não era o Mica, era parar de re-apegar a moldura.
   contra 4,4-4,7 ms antes — desligar as transições do DWM também acelerou.
 - Desfoque: média 63,1 / desvio 3,2 (listras atrás somem). Transparência por
   opacidade: 25,2 -> 40,0 -> 46,7 (`RESULTADO: OK`).
+
+### 8.69 O teste do usuário: sem `WS_CAPTION` e com resize próprio (v0.1.53)
+
+Ideia do usuário, depois de ver que os primeiros quadros ainda mostravam a barra:
+*"mude a borda para algo como se faz no WPF, onde dá para arrastar uma janela
+numa área específica e o mouse fica com formato de cruz"*. Ou seja: em vez de
+depender da moldura nativa para redimensionar, tirar a moldura do estilo de vez e
+fazer o hit-test por conta própria.
+
+#### O que foi feito
+
+1. **`WS_CAPTION` sai do estilo e não volta** (`tira_legenda`). Sem o bit, o tema
+   clássico **não tem onde desenhar legenda** — nem no primeiro quadro. O bit é
+   re-arrancado na ativação, porque o tao repõe os estilos ao mostrar/maximizar/
+   fixar no topo.
+2. **`WM_NCHITTEST` próprio**: 8 px de borda e **14 px nos cantos**, escalados
+   pelo DPI da janela. Devolve `HTLEFT`/`HTRIGHT`/`HTTOP`/`HTBOTTOM` e os quatro
+   cantos, e `DefSubclassProc` no resto — quem conduz o arrasto continua sendo o
+   Windows, então o cursor de redimensionar aparece sozinho.
+3. **`WM_GETMINMAXINFO`**: sem `WS_CAPTION` o Windows deixou de descontar a barra
+   de tarefas ao maximizar (medido: **1934x1094** numa tela de 1080, cobrindo a
+   barra). A área máxima passou a ser `rcWork` do monitor da janela: **1920x1040**.
+
+O que **não** foi feito: interceptar `WM_NCCALCSIZE` (o tao encolhe ali a janela
+maximizada; a regra continua valendo).
+
+#### Medido na 0.1.53 instalada
+
+| Medida | Antes (0.1.52) | Agora (0.1.53) |
+|---|---|---|
+| `WS_CAPTION` no estilo | presente | **ausente** (`0x140F0000`) |
+| 6 aberturas por `Alt+Space` | limpas | limpas (`faixa=(0,0)`, `nc_render=False`) |
+| Bandeja | limpa | limpa (`topo=39,6` contra referência **39,6**) |
+| Estado sabotado (DWM forçado ao estilo) | `topo_claro=0` | `topo_claro=2` = **referência 2** |
+| Resize na lateral | 1120 -> 1208 | 1120 -> **1200** |
+| Resize no canto (diagonal) | — | **+77 x +55 px**, cursor `65553` = `IDC_SIZENWSE` (a cruz) |
+| Maximizada | 1936x1056 | **1920x1040**, faixa `(0,0)`, não cobre a barra |
+| Latência de abertura | 1,9 ms | **2,3 ms** (mediana de 6) |
+| Desfoque / transparência | 63,1 / 3,2 · 25→53→65 | **61,5 / 3,4** · 24,7 → 52,7 → 65,1 |
+
+#### Conserto no harness
+
+`CreateWindowExW` sem `argtypes` estourava `OverflowError: int too long to
+convert` no `hInstance` (o `GetModuleHandleW` era lido como `int`). Passou a ter
+`restype = c_void_p` e a lista de `argtypes` em `teste_translucido.py` e
+`teste_blur_padrao.py`.

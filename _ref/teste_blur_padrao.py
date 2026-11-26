@@ -50,6 +50,10 @@ def listras():
     user32.DefWindowProcW.argtypes = [w.HWND, ctypes.c_uint, ctypes.c_size_t, ctypes.c_ssize_t]
     user32.DefWindowProcW.restype = ctypes.c_ssize_t
     user32.CreateWindowExW.restype = w.HWND
+    user32.CreateWindowExW.argtypes = [
+        w.DWORD, w.LPCWSTR, w.LPCWSTR, w.DWORD, ctypes.c_int, ctypes.c_int,
+        ctypes.c_int, ctypes.c_int, w.HWND, w.HMENU, ctypes.c_void_p, ctypes.c_void_p,
+    ]
 
     def pintar(hdc, largura, altura):
         preto = gdi32.CreateSolidBrush(0x000000)
@@ -77,7 +81,8 @@ def listras():
     cb = WNDPROC(proc)
     wc = T.WNDCLASSW()
     wc.lpfnWndProc = cb
-    wc.hInstance = kernel32.GetModuleHandleW(None)
+    kernel32.GetModuleHandleW.restype = ctypes.c_void_p
+    wc.hInstance = kernel32.GetModuleHandleW(None) or 0
     wc.lpszClassName = "RayclipListras"
     user32.RegisterClassW(ctypes.byref(wc))
     hwnd = user32.CreateWindowExW(
