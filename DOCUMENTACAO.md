@@ -8,11 +8,11 @@ dele é usado; só o resultado visual e funcional foi reproduzido.
 
 - Pasta do projeto: `C:\Users\Lugia\Projects\rayclip`
 - Stack: **Tauri v2 (Rust) + React + TypeScript + WebView2**
-- Versão atual: **0.1.47**
-- Binário: `src-tauri/target/release/rayclip.exe` (11.135.488 B, SHA256
-  `23a3681907736fbe3930575ab8cc82dda41db11c091434b3dc86a210eaa82a4d`)
-- Instalador: `src-tauri/target/release/bundle/nsis/Rayclip_0.1.47_x64-setup.exe`
-  (3.816.514 B)
+- Versão atual: **0.1.48**
+- Binário: `src-tauri/target/release/rayclip.exe` (11.157.504 B, SHA256
+  `32e664a88385cc5f15a067d04872df87ae7a7673b260d4b554b73a02338a58be`)
+- Instalador: `src-tauri/target/release/bundle/nsis/Rayclip_0.1.48_x64-setup.exe`
+  (3.820.700 B)
 
 Este documento explica **o que o app faz, como é feito por dentro e como cada
 problema difícil foi resolvido** (com a medição usada para provar).
@@ -3405,3 +3405,73 @@ badge **152%**; clique simples → card **720×349 em x=90, y=70**; scroll dentr
 card → **175%**; arrasto → `translate(60px, 40px)`; canto → card de **720×349
 para 600×279**; arrastar na prévia **não** abriu o card, clique sem arrasto
 abriu; `Espaço` fechou e reabriu; `Esc` fechou e a janela principal continuou.
+
+### 8.64 A legenda clássica voltava ao abrir pela bandeja (v0.1.48)
+
+Sintoma do usuário: clicar no ícone da bandeja do Rayclip abria a janela **com
+a barra de título do Windows 7** (ícone, "Rayclip", minimizar/maximizar/fechar).
+
+#### Por que todas as medidas anteriores passaram
+
+A correção da v0.1.46 mede `janela − cliente`: se a faixa dá 0, "não há barra".
+Isso estava — e continua — correto, mas **incompleto**: com a área não-cliente
+em zero, o que o Windows faz ao decidir repintar a legenda é desenhá-la **dentro
+da área do cliente**, no alto. A faixa continua 0 e a barra aparece assim mesmo.
+Era por isso que o defeito só existia no caminho da bandeja: quem dispara esse
+repintar é uma mudança de composição vinda do shell (a gaveta de ícones), e não
+o atalho global, que já abre com a composição no estado que o app pediu.
+
+#### Reprodução (medida)
+
+`_ref/teste_moldura2.py`, passo 4 — deixa a janela no estado que uma mudança de
+composição deixa: força `DWMWA_NCRENDERING_POLICY = DWMNCRP_USEWINDOWSTYLE`
+(volta a valer o `WS_CAPTION` do estilo), manda `WM_NCACTIVATE`,
+`WM_NCUAHDRAWCAPTION` e `WM_NCUAHDRAWFRAME`.
+
+| Build | Faixa | Pixels claros nas 26 linhas do topo | Veredito |
+|---|---|---|---|
+| v0.1.47 | (0, 0) | **670** | legenda clássica (confirmado na captura) |
+| v0.1.48 | (0, 0) | **0** | sem legenda (confirmado na captura) |
+
+A faixa ser 0 nos dois casos é justamente a lição: **este defeito não aparece
+nessa medida**.
+
+#### O que mudou (`win32.rs`)
+
+1. **`WM_NCACTIVATE` devolve TRUE e descarta o resultado do `DefSubclassProc`.**
+   É o `DefWindowProc` que repinta a moldura; devolver TRUE diz "eu cuidei, não
+   repinte". O `DefSubclassProc` **continua sendo chamado antes**, porque o tao
+   usa essa mensagem para marcar `set_active` e disparar ganho/perda de foco —
+   pular a chamada quebraria o estado interno dele.
+2. **`WM_NCUAHDRAWCAPTION` / `WM_NCUAHDRAWFRAME` (0x00AE / 0x00AF) -> 0.**
+   São as mensagens não documentadas do caminho clássico de legenda.
+3. **`redesenhar_moldura()`** depois de reafirmar a política:
+   `RedrawWindow(RDW_FRAME | RDW_INVALIDATE | RDW_UPDATENOW)`. Reafirmar a
+   política **não apaga** o que o DWM já compôs — é preciso mandar redesenhar a
+   moldura na hora.
+
+`WM_NCCALCSIZE` continua **sem** ser interceptado de propósito: o tao responde 0
+para janela sem moldura, mas também encolhe a janela maximizada para não cobrir
+a barra de tarefas (medido: 1936×1056 numa tela de 1080). Responder 0 aqui
+jogaria isso fora.
+
+#### Provas
+
+`_ref/teste_moldura2.py` (build de depuração, janela normalizada em 1120×720):
+
+| Passo | Resultado |
+|---|---|
+| 1. aberta | faixa **(0, 0)** |
+| 2. arrasto na borda direita | 1120 -> **1200** px (resize intacto) |
+| 3. maximada | **1936×1056** numa tela de 1080 (deixa a barra) |
+| 4. sabotagem | faixa (0, 0), **0** pixels claros no topo (antes: 670) |
+
+E o caminho **real** da bandeja, sem sabotagem: `_ref/teste_tray_clique.py`
+pergunta ao próprio tauri onde está o ícone (`tray_rect`), abre a gaveta de
+ícones ocultos e clica nele com entrada sintética -> `tray: clicado` no log,
+janela aberta, faixa (0, 0) e nenhuma legenda na captura.
+
+Duas portas ficaram no app só para esses testes: `tray_rect` (posição do ícone
+na tela) e `simular_bandeja` (chama o mesmo `show_window` da bandeja).
+
+`cargo test --lib` **62/62** · `cargo clippy --all-targets` 0 · `npx tsc --noEmit` 0.

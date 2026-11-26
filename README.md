@@ -513,6 +513,24 @@ copiou, então se o gerenciador não publicar o marcador o conteúdo entra no
 histórico dele. A decisão fica nossa, de propósito, e o interruptor "Also capture
 passwords & protected content" desliga o filtro quando você quiser.
 
+### Novidades da v0.1.48 — abrir pela bandeja não traz mais a barra do Windows 7
+
+- O clique no ícone da bandeja podia abrir a janela com a **barra de título
+  clássica** (ícone, título e os três botões). A causa não era faixa de título
+  sobrando: com a área não-cliente em zero, o Windows desenhava a legenda
+  **dentro** da área do cliente quando uma mudança de composição vinha do shell.
+  Por isso a medida de sempre (`janela − cliente = 0`) não pegava.
+- Agora a ativação responde "eu cuidei, não repinte" (`WM_NCACTIVATE` → TRUE,
+  sem perder o que o tao faz antes), as mensagens clássicas de legenda
+  (`WM_NCUAHDRAWCAPTION`/`WM_NCUAHDRAWFRAME`) são respondidas com 0 e, depois de
+  reafirmar a política do DWM, a moldura é **redesenhada na hora** — restaurar a
+  política não apaga o que já foi composto.
+- Medido: no estado que reproduz o defeito, os pixels claros do topo caem de
+  **670** para **0**; e o clique real na bandeja (posição do ícone pedida ao
+  tauri, clique sintético) abre sem legenda nenhuma. Redimensionar pela borda
+  continua funcionando (1120 → 1200) e maximizar não cobre a barra de tarefas
+  (1936×1056 numa tela de 1080).
+
 ### Novidades da v0.1.47 — configurações que não travam e translúcido de verdade
 
 - Mexer nas configurações (e no slider de transparência) não trava mais o app.

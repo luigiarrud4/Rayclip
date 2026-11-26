@@ -503,16 +503,31 @@ unsafe extern "system" fn moldura_proc(
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         WM_DWMCOMPOSITIONCHANGED, WM_NCACTIVATE, WM_NCPAINT, WM_STYLECHANGED, WM_THEMECHANGED,
     };
+    // Mensagens **não documentadas** que o Windows manda para quem desenha a
+    // legenda no caminho clássico (o mesmo que o "Aero glass" usa quando a
+    // composição não está valendo). Devolver 0 é o que se usa em janela sem
+    // moldura: sem isso, uma ativação vinda de fora (bandeja, menu do shell)
+    // pode mandar pintar a legenda clássica — a "janela do Windows 7".
+    const WM_NCUAHDRAWCAPTION: u32 = 0x00AE;
+    const WM_NCUAHDRAWFRAME: u32 = 0x00AF;
     match msg {
         WM_NCPAINT => 0,
-        // Ativação é quando o `DefWindowProc` repinta a moldura. Deixa o tao
-        // fazer o que ele faz (foco, `MARKER_ACTIVATE`) e pede o recálculo logo
-        // depois: se o tema pintou alguma coisa, ela some no mesmo instante.
+        // `WM_NCCALCSIZE` **não** é interceptado de propósito: o tao responde
+        // 0 para janela sem moldura, mas também encolhe a janela maximizada
+        // para não cobrir a barra de tarefas — devolver 0 aqui jogaria isso
+        // fora e a janela maximizada passaria a cobrir a barra.
+        //
+        // Ativação é quando o `DefWindowProc` repinta a moldura. O tao precisa
+        // da mensagem (ele marca `set_active` e dispara ganho/perda de foco),
+        // então ele roda primeiro e **o resultado dele é descartado**: devolver
+        // TRUE é "eu cuidei, não repinte a moldura".
         WM_NCACTIVATE => {
-            let r = DefSubclassProc(hwnd, msg, wp, lp);
+            let _ = DefSubclassProc(hwnd, msg, wp, lp);
+            crate::log(&format!("moldura: NCACTIVATE wp={wp} lp={lp}"));
             pede_reafirmar(hwnd);
-            r
+            1
         }
+        WM_NCUAHDRAWCAPTION | WM_NCUAHDRAWFRAME => 0,
         // Reafirma em segundo plano: chamar `DwmSetWindowAttribute` ou
         // `SetWindowPos` dentro do callback de mudança de estilo é pedir
         // recursão.
@@ -521,9 +536,15 @@ unsafe extern "system" fn moldura_proc(
             DefSubclassProc(hwnd, msg, wp, lp)
         }
         REAFIRMA_WM => {
+            crate::log("moldura: REAFIRMA");
             REAFIRMA_PENDENTE.store(false, std::sync::atomic::Ordering::Relaxed);
             politica_dwm(hwnd as isize);
             reagir_moldura(hwnd as isize);
+            // Restaurar a política **não apaga** o que já foi pintado: quem
+            // compôs a legenda foi o DWM, e ele só a descarta no próximo
+            // desenho da moldura. `reagir_moldura` recalcula a área; este
+            // `RedrawWindow` manda redesenhá-la na hora.
+            redesenhar_moldura(hwnd as isize);
             1
         }
         _ => DefSubclassProc(hwnd, msg, wp, lp),
@@ -544,6 +565,26 @@ static MOLDA_INSTALADA: std::sync::atomic::AtomicIsize = std::sync::atomic::Atom
 /// `SWP_FRAMECHANGED` manda o `WM_NCCALCSIZE` de novo, com o estado já pronto
 /// (o tao responde 0 para janela sem moldura) e a faixa é apagada — o mesmo
 /// efeito do maximizar/restaurar, só que automático e sem piscar.
+/// Manda redesenhar a moldura **agora** (`RDW_FRAME`), depois que a política do
+/// DWM voltou a "não desenhar o NC". Sem isso a legenda pintada pelo DWM
+/// continua na tela até algo mais forçar um desenho.
+pub fn redesenhar_moldura(h: isize) {
+    if h == 0 {
+        return;
+    }
+    use windows_sys::Win32::Graphics::Gdi::{
+        RedrawWindow, RDW_FRAME, RDW_INVALIDATE, RDW_UPDATENOW,
+    };
+    unsafe {
+        RedrawWindow(
+            h as HWND,
+            std::ptr::null(),
+            std::ptr::null_mut(),
+            RDW_FRAME | RDW_INVALIDATE | RDW_UPDATENOW,
+        );
+    }
+}
+
 pub fn reagir_moldura(h: isize) {
     if h == 0 {
         return;

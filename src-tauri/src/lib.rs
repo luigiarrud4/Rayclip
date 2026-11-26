@@ -2576,6 +2576,23 @@ fn entry_text(state: State<AppState>, id: String) -> Option<String> {
         .and_then(|e| e.text.clone())
 }
 
+/// Posição do ícone da bandeja na tela (para o teste automatizado clicar nele).
+#[tauri::command]
+fn tray_rect(app: AppHandle) -> Option<(i32, i32, i32, i32)> {
+    let tray = app.tray_by_id("rayclip-tray")?;
+    let r = tray.rect().ok()??;
+    let p = r.position.to_physical::<i32>(1.0);
+    let s = r.size.to_physical::<i32>(1.0);
+    Some((p.x, p.y, s.width, s.height))
+}
+
+/// Porta de teste: chama o **mesmo** caminho que o ícone da bandeja usa.
+#[tauri::command]
+fn simular_bandeja(app: AppHandle) {
+    log("teste: simular_bandeja");
+    show_window(&app);
+}
+
 #[tauri::command]
 fn hide_window(app: AppHandle) {
     if let Some(win) = app.get_webview_window("main") {
@@ -3708,6 +3725,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             list_entries,
             drag_payload,
+            simular_bandeja,
+            tray_rect,
         drag_files,
             drag_start,
             drag_end,
