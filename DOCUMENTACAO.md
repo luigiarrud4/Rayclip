@@ -8,11 +8,11 @@ dele é usado; só o resultado visual e funcional foi reproduzido.
 
 - Pasta do projeto: `C:\Users\Lugia\Projects\rayclip`
 - Stack: **Tauri v2 (Rust) + React + TypeScript + WebView2**
-- Versão atual: **0.1.55**
+- Versão atual: **0.1.56**
 - Binário: `src-tauri/target/release/rayclip.exe` (11.160.576 B, SHA256
-  `3809670de37303e5de8db949e4b601a710043a8093c188380b3d2618174a8035`)
-- Instalador: `src-tauri/target/release/bundle/nsis/Rayclip_0.1.55_x64-setup.exe`
-  (3.823.562 B)
+  `326b6e2cc1efb3b924fa1c87f5091e27a518df6fe5f54c1ed0465dcf0c7d3857`)
+- Instalador: `src-tauri/target/release/bundle/nsis/Rayclip_0.1.56_x64-setup.exe`
+  (3.823.133 B)
 
 Este documento explica **o que o app faz, como é feito por dentro e como cada
 problema difícil foi resolvido** (com a medição usada para provar).
@@ -3790,3 +3790,43 @@ começa em y=63 (antes 57 — 6 px a mais de faixa).
 Aproveitei para traduzir duas frases soltas do painel de detalhes que o
 `check_i18n.py` acusava ("This format cannot be played here", "Muted by
 default"): agora **0 sem tradução** em 308 usos de `t()`.
+
+### 8.72 Pesquisa: o mesmo defeito tem correção mesclada no Electron (v0.1.56)
+
+Pesquisando relatos com o mesmo sintoma (janela sem moldura + translúcida que
+ganha a barra clássica), apareceram quatro fontes úteis:
+
+| Fonte | O que diz |
+|---|---|
+| **electron/electron#39959** + **PR #40749** (mesclado) | "phantom titlebar" em janela sem moldura com fundo Mica/acrílico. Correção: chamar `DefWindowProc(WM_NCACTIVATE)` com **lParam = -1** |
+| MSDN `WM_NCACTIVATE` | "If this parameter is set to **-1**, DefWindowProc **does not repaint** the nonclient area to reflect the state change" |
+| **tauri#16192** | *"any non-client area at the top makes the system draw a full native titlebar"* — por isso a margem de cima do vidro fica em **0** (já é o nosso caso) |
+| **microsoft/PowerToys#31838** e **PR #33458** | o PowerToys Run tem exatamente a "imaginary title bar" que some e volta; a correção junta acrílico + `DWMWA_BORDER_COLOR` nenhum |
+
+#### Aplicado
+
+`WM_NCACTIVATE` passou a chamar `DefSubclassProc(hwnd, msg, wp, **-1**)` em vez de
+repassar o `lParam` original. É a correção do Electron, palavra por palavra: com
+`-1` o `DefWindowProc` **não repinta** a área não-cliente ao ativar/desativar —
+que é o momento em que a barra aparecia.
+
+#### Novo instrumento: `_ref/captura_fantasma.py`
+
+Em vez de supor quem pinta a barra, o script abre o app pelo atalho e, durante
+~1,4 s, tira capturas da faixa de topo a cada 30 ms. Quando detecta **uma banda
+clara atravessando a largura toda e uniforme** (desvio < 40 — pixel vermelho
+solto já deu falso positivo), ele:
+
+1. salva o quadro em `C:\Windows\System32\_rayclip_tmpantasma_<volta>_<quadro>.png`;
+2. pergunta ao Windows **qual janela está naquele pixel** (`WindowFromPoint`) e
+   imprime classe, pid e título.
+
+Assim o relato do usuário deixa de ser "aparece a barra" e passa a ser "o hwnd
+que pinta é X". Uso: `python _ref/captura_fantasma.py 8`.
+
+#### Medido na 0.1.56 instalada
+
+- `captura_fantasma.py 6`: **0 de 6** aberturas com banda clara (antes desse
+  ajuste, 6 de 6 davam "vermelho" — era falso positivo do detector, corrigido).
+- Esconder ao perder o foco continua funcionando (abrir o Bloco de Notas some com
+  a janela), e abre de novo pelo atalho.

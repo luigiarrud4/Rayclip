@@ -666,7 +666,13 @@ unsafe extern "system" fn moldura_proc(
             tira_legenda(hwnd as isize);
             // O tao precisa da mensagem (ele marca `set_active` e dispara
             // ganho/perda de foco); o resultado dele é descartado.
-            let _ = DefSubclassProc(hwnd, msg, wp, lp);
+            //
+            // `lp = -1` é o truque documentado (MSDN, `WM_NCACTIVATE`): com -1 o
+            // `DefWindowProc` **não repinta** a área não-cliente para refletir a
+            // mudança de estado. É a correção que o Electron usa no mesmo defeito
+            // (PR #40749): sem ela, uma janela sem moldura e transparente ganha a
+            // barra clássica quando é ativada — o "phantom titlebar".
+            let _ = DefSubclassProc(hwnd, msg, wp, -1);
             crate::log(&format!("moldura: NCACTIVATE wp={wp} lp={lp}"));
             pede_reafirmar(hwnd);
             // Devolver 0 é "não repinte a moldura". Devolver 1 pede o contrário

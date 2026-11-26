@@ -513,6 +513,19 @@ copiou, então se o gerenciador não publicar o marcador o conteúdo entra no
 histórico dele. A decisão fica nossa, de propósito, e o interruptor "Also capture
 passwords & protected content" desliga o filtro quando você quiser.
 
+### Novidades da v0.1.56 — a correção do Electron para a "phantom titlebar"
+
+- Pesquisando o mesmo sintoma, achei o defeito **idêntico** já resolvido no
+  Electron (`#39959`, PR **#40749** mesclado): em janela sem moldura e
+  translúcida, `DefWindowProc(WM_NCACTIVATE)` repinta a área não-cliente e a
+  barra clássica aparece. A correção é chamar com **lParam = -1**, que a MSDN
+  documenta como "**não repinta** a área não-cliente".
+- Aplicado aqui: `DefSubclassProc(hwnd, msg, wp, -1)` no `WM_NCACTIVATE`.
+- Novo instrumento `_ref/captura_fantasma.py`: captura a faixa de topo a cada
+  30 ms numa abertura, salva o quadro quando vê a banda clara e diz **qual janela
+  está naquele pixel** (`WindowFromPoint` com classe e pid) — para de adivinhar.
+- Desfoque, transparência, resize, maximizar e esconder-ao-perder-foco seguem OK.
+
 ### Novidades da v0.1.55 — a faixa de cima virou um puxador visível
 
 - Pergunta do usuário: por que não usar no topo o que a barra de baixo faz? Medido:
