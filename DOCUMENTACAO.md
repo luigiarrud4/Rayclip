@@ -3932,3 +3932,38 @@ bytes: 76118 e 262682 | iguais: False
 ```
 
 `cargo test --lib` passou a **64** testes.
+
+### 8.75 "O translúcido só aparece quando o app está em foco?" — não é proposital (v0.1.58)
+
+Pergunta do usuário. Resposta: **nada no código amarra o vidro ao foco**. O acrílico
+é aplicado em três lugares e nenhum deles olha foco ou ativação:
+
+- `apply_settings` (troca do ajuste `translucent`),
+- `set_windows_transparency` (quando o usuário liga/desliga),
+- `setup` (primeira janela).
+
+#### Medido
+
+Com um fundo **branco** atrás e a janela aberta pelo atalho, amostrando a
+luminância do painel a cada ~35 ms: **62,5 desde o quadro 0** (vidro presente).
+Sólido, na mesma medição da §8.63, dá ~25. Ou seja: nesta máquina o painel **já
+nasce translúcido**, não "vira" translúcido no foco.
+
+#### Por que não reafirmar o vidro em cada abertura
+
+Tentado e **revertido com medição**:
+
+| O que foi tentado | Latência de abrir (mediana de 6) |
+|---|---|
+| sem reafirmar (estado da 0.1.58) | **2,0 ms** |
+| reafirmar antes do `show()` | **35,1 ms** |
+| reafirmar numa thread 40 ms depois | **36,1 ms** |
+| reafirmar em thread só com a janela visível | **36,0 ms** |
+
+Ler/escrever `DWMWA_SYSTEMBACKDROP_TYPE` obriga o DWM a refazer o vidro e a
+chamada espera a composição (~2 quadros). Pior: escrever com a janela **escondida**
+faz a abertura **seguinte** custar os mesmos ~33 ms. Como o vidro já está correto
+no primeiro quadro, o custo não compra nada — ficou fora, com o motivo no código.
+
+Se em outra máquina o painel aparecer sólido até a ativação, o caminho é pagar
+esses ~33 ms; é uma troca, não um bug de ordem.

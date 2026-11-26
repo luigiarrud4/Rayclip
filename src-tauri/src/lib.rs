@@ -2917,6 +2917,12 @@ fn show_window(app: &AppHandle) {
         // simples do Tauri — a versão "rápida" foi descartada por não ter ganho.
         // A política vem **antes** do `show()`: pedida depois, o primeiro quadro
         // já foi montado com o NC ligado e a legenda aparece por um instante.
+        //
+        // O **vidro** não é reafirmado aqui de propósito: medido, o painel já
+        // nasce translúcido no primeiro quadro (luminância 62,5 sobre fundo
+        // branco desde 0 ms) e reescrever `DWMWA_SYSTEMBACKDROP_TYPE` na abertura
+        // custa **33 ms** de latência (2,1 -> 35,1 ms), porque o DWM reconstrói o
+        // vidro e a chamada espera a composição.
         if let Ok(h) = win.hwnd() {
             win32::politica_dwm(h.0 as isize);
         }
