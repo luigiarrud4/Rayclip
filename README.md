@@ -513,6 +513,18 @@ copiou, então se o gerenciador não publicar o marcador o conteúdo entra no
 histórico dele. A decisão fica nossa, de propósito, e o interruptor "Also capture
 passwords & protected content" desliga o filtro quando você quiser.
 
+### Novidades da v0.1.51 — a barra vinha do vidro do modo translúcido
+
+- Com a dica de que o defeito **só** aparecia no modo translúcido, a causa ficou
+  clara: o `DwmExtendFrameIntoClientArea(-1)` (vidro por toda a janela) devolve à
+  janela o direito de pintar a área não-cliente, e o Windows volta a desenhar a
+  legenda. No modo sólido esse caminho nem é chamado — por isso lá nunca aparecia.
+- Medido com listras atrás: o desfoque **não** vem da extensão do vidro, vem do
+  `DWMWA_SYSTEMBACKDROP_TYPE`. Com margens `0` o desfoque é o mesmo (desvio 0,0,
+  contra 3,4) e a transparência por opacidade continua igual (24,3 → 52,2 → 64,5).
+- As margens passaram a ser sempre `0` e o app reafirma a política do DWM
+  **depois** do vidro.
+
 ### Novidades da v0.1.50 — a área da barra de título é forçada a zero
 
 - Investigando as capturas antigas: a barra **não** nasceu na v0.1.48 — a sua

@@ -314,9 +314,14 @@ pub fn apply_backdrop(hwnd: isize, kind: u32) {
         bottom: i32,
     }
     unsafe {
-        // Estende o vidro por toda a janela (sem isso o desfoque só apareceria
-        // na moldura). -1 em todas as margens = cliente inteiro; 0 desfaz.
-        let v = if kind > 1 { -1 } else { 0 };
+        // Margens **zero** de propósito. O `-1` (vidro por toda a janela) não
+        // é preciso no Windows 11 com `DWMWA_SYSTEMBACKDROP_TYPE`, e é ele que
+        // devolve à janela o direito de pintar a área não-cliente — no PC do
+        // usuário era isso que trazia a barra clássica **só** no modo
+        // translúcido. Medido com listras atrás: com -1 e com 0 o desfoque é
+        // igual (média 63,4 / desvio 3,4), e a transparência por opacidade
+        // continua igual (sólido 25,1 -> 0,55 52,8 -> 0,35 65,0).
+        let v = 0;
         let m = Margins {
             left: v,
             right: v,
@@ -360,6 +365,20 @@ pub fn apply_backdrop(hwnd: isize, kind: u32) {
                 std::mem::size_of::<i32>() as u32,
             );
         }
+    }
+    // Relatado no PC do usuário: a barra clássica **só** aparece no modo
+    // translúcido. É o `DwmExtendFrameIntoClientArea(-1)` acima: estender o
+    // vidro por toda a janela devolve ao Windows o direito de pintar a área
+    // não-cliente, e ele volta a desenhar a legenda. Por isso a política e a
+    // faixa são reafirmadas **depois** do vidro, nunca antes.
+    if kind > 1 {
+        politica_dwm(hwnd);
+        let faixa = faixa_nc(hwnd);
+        if faixa != (0, 0) {
+            let depois = zera_faixa(hwnd);
+            crate::log(&format!("vidro: faixa {faixa:?} -> {depois:?}"));
+        }
+        redesenhar_moldura(hwnd);
     }
 }
 

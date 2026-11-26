@@ -8,11 +8,11 @@ dele é usado; só o resultado visual e funcional foi reproduzido.
 
 - Pasta do projeto: `C:\Users\Lugia\Projects\rayclip`
 - Stack: **Tauri v2 (Rust) + React + TypeScript + WebView2**
-- Versão atual: **0.1.50**
+- Versão atual: **0.1.51**
 - Binário: `src-tauri/target/release/rayclip.exe` (11.158.528 B, SHA256
-  `7b9a9cdbae580022c948bee18bd1ee4a3db40b4429da81e97e024fe0dd316bdc`)
-- Instalador: `src-tauri/target/release/bundle/nsis/Rayclip_0.1.50_x64-setup.exe`
-  (3.823.352 B)
+  `6ef856fced75e814998d037a536ae5677bc33a6ee0e57f39cc804adc3da4fdeb`)
+- Instalador: `src-tauri/target/release/bundle/nsis/Rayclip_0.1.51_x64-setup.exe`
+  (3.817.980 B)
 
 Este documento explica **o que o app faz, como é feito por dentro e como cada
 problema difícil foi resolvido** (com a medição usada para provar).
@@ -3572,3 +3572,47 @@ janela e cliente, **faixa (NC)**, bits de estilo, `DWMWA_NCRENDERING_ENABLED`,
 composição do DWM, build do Windows e tema. Com esses números a diferença entre
 "área não-cliente de verdade" e "pintura por cima do conteúdo" deixa de ser
 suposição.
+
+### 8.67 A barra só aparecia no modo translúcido — era o vidro estendido (v0.1.51)
+
+Relato do usuário depois de testar a v0.1.50: *"o problema só aparece no modo
+translúcido; testei com o normal, o escuro padrão, e não aparece"*. Isso mudou o
+suspeito.
+
+#### Causa
+
+`apply_backdrop` chamava `DwmExtendFrameIntoClientArea(-1, -1, -1, -1)` para o
+desfoque cobrir a janela inteira. **Estender o vidro por toda a janela devolve à
+janela o direito de pintar a área não-cliente** — e é isso que faz o Windows
+desenhar de novo a legenda. Só acontece no modo translúcido porque é o único
+caminho que estende o vidro; no sólido o `apply_backdrop` recebe `kind == 1` e
+nunca chama a extensão. Isso explica exatamente o que o usuário viu, e também a
+cor esbranquiçada da legenda nas capturas dele (`#687A8D`, vidro sobre fundo
+claro).
+
+A ordem também estava errada: `sem_moldura` (política do DWM + faixa) rodava
+**antes** de `apply_backdrop`, então o vidro entrava por cima da política já
+aplicada.
+
+#### Correção, com medição
+
+O `-1` não é necessário no Windows 11 quando se usa
+`DWMWA_SYSTEMBACKDROP_TYPE`. Medido com listras preto/branco atrás:
+
+| Margens do vidro | Desfoque (média/desvio) | Transparência por opacidade |
+|---|---|---|
+| `-1` (vidro inteiro) | 63,4 / **3,4** | 25,1 → 52,8 → 65,0 |
+| **`0` (sem vidro)** | 68,0 / **0,0** | 24,3 → 52,2 → 64,5 |
+
+Ou seja: **o desfoque não vem do `DwmExtendFrameIntoClientArea`, vem do
+`DWMWA_SYSTEMBACKDROP_TYPE`**. As margens passaram a ser sempre `0`, o que remove
+o mecanismo que autorizava a legenda. Como reforço, `apply_backdrop` agora
+reafirma a política do DWM **depois** do vidro e força a faixa a zero se ela
+tiver voltado.
+
+#### Verificado na 0.1.51 instalada
+
+- `Alt+Space` 6× em modo translúcido: `faixa=(0,0)`, `nc_render=False`.
+- Desfoque: desvio **0,0** com listras atrás (listras somem = desfoca de verdade).
+- Transparência: sólido **24,3** → 0,55 **52,2** → 0,35 **64,5** (`RESULTADO: OK`).
+- `faixa (NC) : 0 px` no `_ref/diagnostico.ps1` com a janela aberta.
