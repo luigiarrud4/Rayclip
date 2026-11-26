@@ -473,14 +473,76 @@ pub fn politica_dwm(h: isize) -> i32 {
     }
     use windows_sys::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_NCRENDERING_POLICY};
     const DWMNCRP_DISABLED: u32 = 1;
+    // Três pedidos a mais, cada um com motivo medido na referência do tao
+    // (NucleusFramework #413): mesmo com a política desligada, **todo
+    // re-apego da moldura do DWM pinta de 1 a 3 composições de legenda GDI
+    // clássica, em qualquer ordem de chamada**. Tirar a cor da legenda e da
+    // borda e desligar as transições é o que impede essa pintura de existir.
+    const DWMWA_CAPTION_COLOR: u32 = 35;
+    const DWMWA_BORDER_COLOR: u32 = 34;
+    const DWMWA_TRANSITIONS_FORCEDISABLED: u32 = 3;
+    const COR_NENHUMA: u32 = 0xFFFF_FFFE; // DWMWA_COLOR_NONE
     let politica: u32 = DWMNCRP_DISABLED;
+    let sem_cor: u32 = COR_NENHUMA;
+    let sem_transicao: u32 = 1;
     unsafe {
-        DwmSetWindowAttribute(
+        let hr = DwmSetWindowAttribute(
             h as _,
             DWMWA_NCRENDERING_POLICY as u32,
             &politica as *const _ as *const core::ffi::c_void,
             std::mem::size_of_val(&politica) as u32,
+        );
+        let _ = DwmSetWindowAttribute(
+            h as _,
+            DWMWA_CAPTION_COLOR,
+            &sem_cor as *const _ as *const core::ffi::c_void,
+            std::mem::size_of_val(&sem_cor) as u32,
+        );
+        let _ = DwmSetWindowAttribute(
+            h as _,
+            DWMWA_BORDER_COLOR,
+            &sem_cor as *const _ as *const core::ffi::c_void,
+            std::mem::size_of_val(&sem_cor) as u32,
+        );
+        let _ = DwmSetWindowAttribute(
+            h as _,
+            DWMWA_TRANSITIONS_FORCEDISABLED,
+            &sem_transicao as *const _ as *const core::ffi::c_void,
+            std::mem::size_of_val(&sem_transicao) as u32,
+        );
+        hr
+    }
+}
+
+/// O DWM ainda acha que deve desenhar a área não-cliente?
+pub fn nc_desenhado(h: isize) -> bool {
+    if h == 0 {
+        return false;
+    }
+    use windows_sys::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_NCRENDERING_ENABLED};
+    let mut ligado: i32 = 0;
+    let hr = unsafe {
+        DwmGetWindowAttribute(
+            h as _,
+            DWMWA_NCRENDERING_ENABLED as u32,
+            &mut ligado as *mut _ as *mut core::ffi::c_void,
+            std::mem::size_of_val(&ligado) as u32,
         )
+    };
+    hr == 0 && ligado != 0
+}
+
+/// Espera a composição do DWM fechar o quadro atual.
+///
+/// Sem isso, o pedido de "não pinte a legenda" chega **depois** de o quadro
+/// seguinte já ter sido montado, e é essa diferença que aparece como um piscar.
+pub fn flush_dwm() {
+    #[link(name = "dwmapi")]
+    extern "system" {
+        fn DwmFlush() -> i32;
+    }
+    unsafe {
+        DwmFlush();
     }
 }
 
@@ -566,7 +628,19 @@ unsafe extern "system" fn moldura_proc(
             crate::log("moldura: REAFIRMA");
             REAFIRMA_PENDENTE.store(false, std::sync::atomic::Ordering::Relaxed);
             politica_dwm(hwnd as isize);
-            reagir_moldura(hwnd as isize);
+            // Re-apegar a moldura (`SWP_FRAMECHANGED`) faz o DWM pintar de 1 a
+            // 3 quadros de legenda clássica — é o piscar que o usuário ainda
+            // via na v0.1.51. Aqui ele só roda se a faixa estiver errada; o
+            // `redesenhar_moldura` só roda se o DWM **ainda** disser que
+            // desenha o NC.
+            let faixa = faixa_nc(hwnd as isize);
+            if faixa != (0, 0) {
+                let depois = zera_faixa(hwnd as isize);
+                crate::log(&format!("moldura: faixa {faixa:?} -> {depois:?}"));
+            }
+            if !nc_desenhado(hwnd as isize) {
+                return 0;
+            }
             // Restaurar a política **não apaga** o que já foi pintado: quem
             // compôs a legenda foi o DWM, e ele só a descarta no próximo
             // desenho da moldura. `reagir_moldura` recalcula a área; este
@@ -620,27 +694,6 @@ pub fn redesenhar_moldura(h: isize) {
     }
 }
 
-pub fn reagir_moldura(h: isize) {
-    if h == 0 {
-        return;
-    }
-    use windows_sys::Win32::UI::WindowsAndMessaging::{
-        SetWindowPos, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOOWNERZORDER, SWP_NOSIZE,
-        SWP_NOZORDER,
-    };
-    unsafe {
-        SetWindowPos(
-            h as HWND,
-            std::ptr::null_mut(),
-            0,
-            0,
-            0,
-            0,
-            SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_NOACTIVATE
-                | SWP_FRAMECHANGED,
-        );
-    }
-}
 
 static REAFIRMA_PENDENTE: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
@@ -678,7 +731,10 @@ pub fn sem_moldura(h: isize) -> i32 {
         return -1;
     }
     let hr = politica_dwm(h);
-    reagir_moldura(h);
+    flush_dwm();
+    // **Nunca** re-apegar a moldura (`SWP_FRAMECHANGED`) numa abertura normal: é
+    // o re-apego que faz o DWM pintar 1-3 quadros de legenda clássica. Ele só
+    // acontece quando a faixa está de fato errada.
     // Rede de segurança: se a área não-cliente **não** ficou nula, é ali que a
     // barra de título cabe. Acontece quando o `WM_NCCALCSIZE` que chega durante
     // o `CreateWindowExW` cai antes de o tao saber que a janela é sem moldura e

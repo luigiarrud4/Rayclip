@@ -8,11 +8,11 @@ dele é usado; só o resultado visual e funcional foi reproduzido.
 
 - Pasta do projeto: `C:\Users\Lugia\Projects\rayclip`
 - Stack: **Tauri v2 (Rust) + React + TypeScript + WebView2**
-- Versão atual: **0.1.51**
-- Binário: `src-tauri/target/release/rayclip.exe` (11.158.528 B, SHA256
-  `6ef856fced75e814998d037a536ae5677bc33a6ee0e57f39cc804adc3da4fdeb`)
-- Instalador: `src-tauri/target/release/bundle/nsis/Rayclip_0.1.51_x64-setup.exe`
-  (3.817.980 B)
+- Versão atual: **0.1.52**
+- Binário: `src-tauri/target/release/rayclip.exe` (11.159.040 B, SHA256
+  `f11fbfc752402806768a98a229f2f317aec39681848c86e42baa1dd6b95226f6`)
+- Instalador: `src-tauri/target/release/bundle/nsis/Rayclip_0.1.52_x64-setup.exe`
+  (3.823.274 B)
 
 Este documento explica **o que o app faz, como é feito por dentro e como cada
 problema difícil foi resolvido** (com a medição usada para provar).
@@ -3616,3 +3616,65 @@ tiver voltado.
 - Desfoque: desvio **0,0** com listras atrás (listras somem = desfoca de verdade).
 - Transparência: sólido **24,3** → 0,55 **52,2** → 0,35 **64,5** (`RESULTADO: OK`).
 - `faixa (NC) : 0 px` no `_ref/diagnostico.ps1` com a janela aberta.
+
+### 8.68 O piscar que sobrou: o re-apego da moldura era nosso (v0.1.52)
+
+Depois da v0.1.51 a barra ainda aparecia, mas **sumia muito mais rápido**. Esse
+"aparece e some rápido" é a assinatura de duas coisas em sequência: alguém pinta
+a legenda e, logo depois, alguém a apaga. O segundo alguém era o nosso
+`redesenhar_moldura`. O primeiro era **nós mesmos**.
+
+#### Causa
+
+A referência do `tao` (NucleusFramework #413) tem a medição: *tirar
+`WS_CAPTION|WS_THICKFRAME` no meio do caminho desliga a moldura do DWM, e
+**todo re-apego pinta de 1 a 3 composições da legenda GDI clássica, em qualquer
+ordem de chamada***. E era isso que fazíamos em **toda** abertura:
+
+`WM_NCACTIVATE` -> `pede_reafirmar` -> `REAFIRMA_WM` -> `reagir_moldura`
+(`SetWindowPos(SWP_FRAMECHANGED)`) -> o DWM pinta a legenda -> `redesenhar_moldura`
+a apaga. Daí o flash rápido.
+
+#### Correção
+
+1. **A moldura não é mais re-apegada em abertura normal.** `reagir_moldura` foi
+   **removida**; o recálculo (`SWP_FRAMECHANGED`) só acontece quando a faixa
+   está de fato errada (`zera_faixa`).
+2. **A legenda não tem mais como ser pintada**, mesmo num re-apego:
+   `DWMWA_CAPTION_COLOR = DWMWA_COLOR_NONE (0xFFFFFFFE)`,
+   `DWMWA_BORDER_COLOR = DWMWA_COLOR_NONE` e
+   `DWMWA_TRANSITIONS_FORCEDISABLED = TRUE`, junto da política
+   `DWMNCRP_DISABLED`.
+3. **`DwmFlush()`** depois da política: sem ele o pedido chega depois de o quadro
+   seguinte já ter sido montado — é essa diferença que aparece como piscar.
+4. **A ordem também mudou, como o usuário sugeriu**: a política agora é pedida
+   **antes** do `show()`, não depois.
+5. `REAFIRMA_WM` só redesenha a moldura se `DWMWA_NCRENDERING_ENABLED` ainda
+   disser que o DWM desenha o NC (`nc_desenhado`).
+
+#### Sobre o Mica (sugestão do usuário)
+
+O Rayclip **já usa a API moderna** que os mods do Windhawk usam:
+`DWMWA_SYSTEMBACKDROP_TYPE`. A diferença é o valor:
+
+| Valor | Nome | O que amostra |
+|---|---|---|
+| `2` | Mica (`DWMSBT_MAINWINDOW`) | o **papel de parede** |
+| **`3`** | **Acrílico (`DWMSBT_TRANSIENTWINDOW`)** | **o que está atrás da janela** |
+
+Para um painel flutuante o certo é o `3` (é o que já está lá desde a v0.1.47):
+Mica num painel flutuante mostraria o papel de parede em vez do conteúdo por
+baixo. O que faltava não era o Mica, era parar de re-apegar a moldura.
+
+#### Medido na 0.1.52 instalada
+
+- `Alt+Space` 6x: `faixa=(0,0)`, `nc_render=False` em **6 de 6**.
+- Clique na bandeja: `faixa=(0,0)`, `topo=43,3` contra referência **43,3** (sem legenda).
+- Estado **sabotado** (forçando `DWMWA_NCRENDERING_POLICY = USEWINDOWSTYLE`):
+  `topo_claro = 0` — antes da v0.1.52 esse mesmo estado dava 274/279, isto é, a
+  legenda era pintada. Agora não há mais o que pintar.
+- Resize pela borda: 1120 -> **1208 px**; maximizada: **1936x1056** numa tela de 1080.
+- **Latência de abertura: mediana 1,9 ms** (1,7 / 1,8 / 1,8 / 1,9 / 2,3 / 3,6),
+  contra 4,4-4,7 ms antes — desligar as transições do DWM também acelerou.
+- Desfoque: média 63,1 / desvio 3,2 (listras atrás somem). Transparência por
+  opacidade: 25,2 -> 40,0 -> 46,7 (`RESULTADO: OK`).

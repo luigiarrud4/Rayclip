@@ -2892,6 +2892,11 @@ fn show_window(app: &AppHandle) {
         // Medido com A/B: `win.show()` (abaixo) e um `ShowWindow` direto dão o
         // mesmo tempo até a janela aparecer (2 ms, 5 de 5). Fica o caminho
         // simples do Tauri — a versão "rápida" foi descartada por não ter ganho.
+        // A política vem **antes** do `show()`: pedida depois, o primeiro quadro
+        // já foi montado com o NC ligado e a legenda aparece por um instante.
+        if let Ok(h) = win.hwnd() {
+            win32::politica_dwm(h.0 as isize);
+        }
         let _ = win.show();
         let _ = win.set_always_on_top(true);
         if let Ok(h) = win.hwnd() {

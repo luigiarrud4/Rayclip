@@ -513,6 +513,21 @@ copiou, então se o gerenciador não publicar o marcador o conteúdo entra no
 histórico dele. A decisão fica nossa, de propósito, e o interruptor "Also capture
 passwords & protected content" desliga o filtro quando você quiser.
 
+### Novidades da v0.1.52 — o piscar era o nosso próprio re-apego da moldura
+
+- A barra aparecia e sumia rápido porque **éramos nós**: cada abertura mandava
+  `WM_NCACTIVATE -> REAFIRMA -> SetWindowPos(SWP_FRAMECHANGED)`, e todo re-apego
+  da moldura faz o DWM pintar de 1 a 3 quadros de legenda clássica; logo depois o
+  `RedrawWindow` a apagava.
+- Agora a moldura **não** é mais re-apegada em abertura normal (só se a faixa
+  estiver errada), a legenda perde a cor
+  (`DWMWA_CAPTION_COLOR`/`DWMWA_BORDER_COLOR = NONE`), as transições do DWM são
+  desligadas e um `DwmFlush` fecha o quadro. A política passou a ser pedida
+  **antes** do `show()`, não depois.
+- Medido: 6 aberturas seguidas sem legenda, estado sabotado com **0** pixel de
+  legenda (antes 274), resize 1120 → 1208, maximizada 1936×1056, e **abertura em
+  1,9 ms de mediana** (antes 4,4-4,7 ms).
+
 ### Novidades da v0.1.51 — a barra vinha do vidro do modo translúcido
 
 - Com a dica de que o defeito **só** aparecia no modo translúcido, a causa ficou
