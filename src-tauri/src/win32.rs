@@ -321,14 +321,17 @@ pub fn backdrop_tipo(hwnd: isize) -> i32 {
 /// Usado pelo vigia (§8.78): quando o DWM perde o vidro depois de horas de uso
 /// (troca de GPU, suspensão do monitor, reinício do compositor), o painel fica
 /// sólido para sempre porque nada volta a pedir. Aqui ele volta.
-pub fn reaplica_vidro(hwnd: isize) {
+pub fn reaplica_vidro(hwnd: isize, escuro: bool) {
     if hwnd == 0 {
         return;
     }
     use windows_sys::Win32::Graphics::Dwm::DwmSetWindowAttribute;
     const DWMWA_SYSTEMBACKDROP_TYPE: u32 = 38;
+    const DWMWA_USE_IMMERSIVE_DARK_MODE: u32 = 20;
     const DWMSBT_TRANSIENTWINDOW: i32 = 3;
     let mut tipo = DWMSBT_TRANSIENTWINDOW;
+    // O modo do vidro acompanha o tema (ver `apply_backdrop`).
+    let mut dark = if escuro { 1i32 } else { 0i32 };
     unsafe {
         let _ = DwmSetWindowAttribute(
             hwnd as *mut core::ffi::c_void,
@@ -336,10 +339,20 @@ pub fn reaplica_vidro(hwnd: isize) {
             &mut tipo as *mut _ as *mut core::ffi::c_void,
             std::mem::size_of::<i32>() as u32,
         );
+        let _ = DwmSetWindowAttribute(
+            hwnd as *mut core::ffi::c_void,
+            DWMWA_USE_IMMERSIVE_DARK_MODE,
+            &mut dark as *mut _ as *mut core::ffi::c_void,
+            std::mem::size_of::<i32>() as u32,
+        );
     }
 }
 
-pub fn apply_backdrop(hwnd: isize, kind: u32) {
+/// Aplica o vidro. `escuro` é o modo do vidro do DWM: **tem de acompanhar o
+/// tema**, senão o acrílico escuro aparece atrás de uma página clara — medido no
+/// tema "Paper Light": painel **47** de luminância (mais escuro que o tema
+/// escuro, 70) com texto escuro em cima, contraste **2,3:1**, ilegível.
+pub fn apply_backdrop(hwnd: isize, kind: u32, escuro: bool) {
     use windows_sys::Win32::Graphics::Dwm::DwmSetWindowAttribute;
     const DWMWA_SYSTEMBACKDROP_TYPE: u32 = 38;
     const DWMWA_USE_IMMERSIVE_DARK_MODE: u32 = 20;
@@ -403,7 +416,7 @@ pub fn apply_backdrop(hwnd: isize, kind: u32) {
             }
         }
         if kind > 1 {
-            let mut dark = 1i32;
+            let mut dark = if escuro { 1i32 } else { 0i32 };
             let _ = DwmSetWindowAttribute(
                 hwnd as *mut core::ffi::c_void,
                 DWMWA_USE_IMMERSIVE_DARK_MODE,

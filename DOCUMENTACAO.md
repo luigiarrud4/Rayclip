@@ -8,11 +8,11 @@ dele é usado; só o resultado visual e funcional foi reproduzido.
 
 - Pasta do projeto: `C:\Users\Lugia\Projects\rayclip`
 - Stack: **Tauri v2 (Rust) + React + TypeScript + WebView2**
-- Versão atual: **0.1.62**
+- Versão atual: **0.1.63**
 - Binário: `src-tauri/target/release/rayclip.exe` (SHA256
-  `c7b054bd94112a954577713475f6900c7e6c7d7f9755906a25c68092d1f55dde`)
-- Instalador: `src-tauri/target/release/bundle/nsis/Rayclip_0.1.62_x64-setup.exe`
-  (3.831.204 B) · instala em `C:\Program Files\Rayclip` com UAC
+  `14fa809102d43ab80136d8f7e17cfe5a7db0a8b53dbd6e2f41f5b466a869934e`)
+- Instalador: `src-tauri/target/release/bundle/nsis/Rayclip_0.1.63_x64-setup.exe`
+  (3.832.468 B) · instala em `C:\Program Files\Rayclip` com UAC
 
 Este documento explica **o que o app faz, como é feito por dentro e como cada
 problema difícil foi resolvido** (com a medição usada para provar).
@@ -4108,3 +4108,43 @@ reproduzidos aqui; o log agora mostra `renderer morto: sem heartbeat…` quando 
 WebView2 reinicia, que é a causa provável desse sintoma (a página recarregada
 perde estado). Se voltar, o `%TEMP%
 ayclip.log` diz qual foi.
+
+### 8.79 Tema claro + Mica: texto preto em fundo escuro (v0.1.63)
+
+Relato: *"o transparente é um e o sólido é outro, aí quando mistura o sólido e o
+transparente, por exemplo o Mica padrão com o tema branco, o texto fica preto e
+ilegível"*.
+
+#### Duas causas, as duas medidas
+
+**(1) `rgbDe()` não entendia hex com alfa.** O `getComputedStyle` devolve as
+variáveis do tema translúcido em `#rrggbbaa` (`#f8f9fbb3`), e a função só aceitava
+`#rrggbb` e `rgb(...)`. Quando não entendia, `aplicarFundo` caía no **fundo escuro
+fixo** `{r:10,g:10,b:12}`:
+
+| Tema (Mica ligado) | Painel antes | Painel depois |
+|---|---|---|
+| dark | 89 | 89 |
+| midnight | 93 | 93 |
+| nord | 109 | 109 |
+| rose | 93 | 93 |
+| **light** | **47** | **201** |
+
+O tema claro ficava **mais escuro** que o escuro. Contraste do texto no tema claro:
+**2,3:1** antes (ilegível) e **9,1:1** depois. Nos temas escuros o fallback
+coincidia com a cor do tema, e por isso ninguém via.
+
+Correção: `rgbDe` passou a aceitar `#rgb`, `#rrggbb` **e `#rrggbbaa`** (o alfa é
+ignorado, que é o certo aqui: quem manda no alfa é o controle de transparência).
+
+**(2) O vidro do DWM era pedido sempre no modo escuro.** `apply_backdrop` fazia
+`DWMWA_USE_IMMERSIVE_DARK_MODE = 1` em qualquer tema translúcido, então o acrílico
+atrás da página clara era escuro. Agora `apply_backdrop(hwnd, kind, escuro)` recebe
+`theme != "light"`, e o vigia (§8.78) faz o mesmo ao reaplicar.
+
+#### Verificado
+
+Com o app rodando e trocando de tema pelo IPC (Mica ligado, `bgOpacity` 0.55):
+painel `dark 89 · midnight 93 · nord 109 · rose 93 · light 201`, cada tema com o
+**seu** vidro (`rgb(11 18 36 / 0.63)`, `rgb(46 52 64 / 0.63)`…), e o tema claro com
+contraste **9,1:1**.

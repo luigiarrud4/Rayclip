@@ -212,6 +212,7 @@ fn apply_settings(
                     } else {
                         1
                     },
+                    cfg.theme != "light",
                 );
             }
         }
@@ -570,7 +571,11 @@ fn set_windows_transparency(
     let translucent = { lock_settings(&state.settings).translucent };
     if let Some(win) = app.get_webview_window("main") {
         if let Ok(h) = win.hwnd() {
-            win32::apply_backdrop(h.0 as isize, if translucent && enable { 2 } else { 1 });
+            let escuro = app
+                .try_state::<AppState>()
+                .map(|st| st.settings.lock().unwrap_or_else(|e| e.into_inner()).theme != "light")
+                .unwrap_or(true);
+            win32::apply_backdrop(h.0 as isize, if translucent && enable { 2 } else { 1 }, escuro);
         }
     }
     Ok(sysinteg::windows_transparency())
@@ -3005,7 +3010,13 @@ fn vigia_estado(app: AppHandle) {
                     // DWM de fato largou o vidro.
                     if win32::backdrop_tipo(h.0 as isize) == 1 {
                         log("vigia: vidro perdido -> reaplicando o acrilico");
-                        win32::reaplica_vidro(h.0 as isize);
+                        let escuro = app
+                            .try_state::<AppState>()
+                            .map(|st| {
+                                st.settings.lock().unwrap_or_else(|e| e.into_inner()).theme != "light"
+                            })
+                            .unwrap_or(true);
+                        win32::reaplica_vidro(h.0 as isize, escuro);
                     }
                 }
             }
@@ -3959,7 +3970,11 @@ pub fn run() {
                     log(&format!("moldura: subclasse instalada, dwm=0x{hr:08x}"));
                     // Mica (translúcido) já no primeiro desenho, sem "flash".
                     let blur = cfg.translucent && sysinteg::windows_transparency();
-                    win32::apply_backdrop(h.0 as isize, if blur { 2 } else { 1 });
+                    win32::apply_backdrop(
+                        h.0 as isize,
+                        if blur { 2 } else { 1 },
+                        cfg.theme != "light",
+                    );
                 }
                 // Lido de novo aqui (em vez de capturar de `run()`): a closure
                 // do `setup` pode sobreviver à função, e um `bool` copiado evita

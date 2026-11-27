@@ -513,6 +513,16 @@ copiou, então se o gerenciador não publicar o marcador o conteúdo entra no
 histórico dele. A decisão fica nossa, de propósito, e o interruptor "Also capture
 passwords & protected content" desliga o filtro quando você quiser.
 
+### Novidades da v0.1.63 — tema claro com Mica deixou de ser ilegível
+
+- `rgbDe()` só entendia `#rrggbb`; o `getComputedStyle` devolve o vidro do tema em
+  `#rrggbbaa` (`#f8f9fbb3`), então caía no fundo escuro fixo — no tema Paper Light
+  o painel ficava com luminância **47** (mais escuro que o tema escuro, 89) e o
+  texto escuro dava **2,3:1**. Agora aceita hex com alfa: painel **201**, contraste
+  **9,1:1**.
+- O vidro do DWM também passou a acompanhar o tema
+  (`DWMWA_USE_IMMERSIVE_DARK_MODE = 0` no tema claro) — antes era sempre escuro.
+
 ### Novidades da v0.1.62 — vigia que devolve o vidro e os atalhos
 
 - Depois de horas, o Windows pode **largar o acrílico** (troca de GPU, suspensão do

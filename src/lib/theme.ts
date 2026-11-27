@@ -111,13 +111,30 @@ function aplicarFundo(
   );
 }
 
-/** `#rrggbb`, `rgb(r g b)` ou `rgb(r g b / a)` -> componentes. */
+/**
+ * `#rgb`, `#rrggbb`, `#rrggbbaa`, `rgb(r g b)` ou `rgb(r g b / a)` -> componentes.
+ *
+ * O `#rrggbbaa` **tem** de entrar: o `getComputedStyle` devolve as variáveis de
+ * tema translúcido nesse formato (`#f8f9fbb3`), e antes isto devolvia `null` e
+ * caía no fundo escuro fixo `rgb(10 10 12)`. Resultado medido: no tema claro com
+ * Mica o painel ficava com luminância **47** (mais escuro que o tema escuro) e o
+ * texto escuro em cima dava contraste **2,3:1** — ilegível, exatamente o que o
+ * usuário relatou.
+ */
 function rgbDe(valor: string): { r: number; g: number; b: number } | null {
   const v = (valor || "").trim();
-  const hex = /^#([0-9a-f]{6})$/i.exec(v);
+  const hex = /^#([0-9a-f]{6})([0-9a-f]{2})?$/i.exec(v);
   if (hex) {
     const n = parseInt(hex[1], 16);
     return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
+  }
+  const curto = /^#([0-9a-f])([0-9a-f])([0-9a-f])$/i.exec(v);
+  if (curto) {
+    return {
+      r: parseInt(curto[1] + curto[1], 16),
+      g: parseInt(curto[2] + curto[2], 16),
+      b: parseInt(curto[3] + curto[3], 16),
+    };
   }
   const m = /^rgba?\(\s*(\d+)[\s,]+(\d+)[\s,]+(\d+)/i.exec(v);
   if (m) return { r: +m[1], g: +m[2], b: +m[3] };
