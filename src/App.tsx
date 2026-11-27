@@ -1060,6 +1060,33 @@ export default function App() {
   useEffect(() => {
     const onKey = async (e: KeyboardEvent) => {
       try {
+      // Atalhos do **navegador** não existem neste app. `Ctrl+F` abre a barra
+      // "localizar" do WebView2 — aquela caixinha escura flutuante com ^ v e X
+      // que ficava sobre a interface (medido: reproduz com Ctrl+F sintético e é
+      // uma janela do próprio WebView2, não nossa). `Ctrl+G` é o "próximo
+      // resultado" dela, `Ctrl+P` abre impressão e `Ctrl+U` o código-fonte.
+      //
+      // O que o usuário mapeou em Configurações continua valendo: só bloqueia a
+      // combinação que **não** está em `inAppKeys`.
+      if ((e.ctrlKey || e.metaKey) && !e.altKey) {
+        const k = e.key.toLowerCase();
+        // Só teclas que **não** são ações do app (as de ações — Ctrl+P fixar,
+        // Ctrl+O abrir link — ficam de fora para nunca serem engolidas). O
+        // `Ctrl+F` é o caso visível: abre a barra de localizar do WebView2.
+        const doNavegador = ["f", "g", "j", "h", "d"];
+        if (doNavegador.includes(k)) {
+          const combos = Object.values(cfg?.inAppKeys ?? {}).map((v) =>
+            String(v).toLowerCase().replace(/\s+/g, "")
+          );
+          const alvo = e.shiftKey ? `ctrl+shift+${k}` : `ctrl+${k}`;
+          const usado = combos.some((c) => c === alvo || c === alvo.replace("ctrl", "super"));
+          if (!usado) {
+            e.preventDefault();
+            e.stopPropagation();
+            return;
+          }
+        }
+      }
       if (panelOpen) return; // panel handles its own keys
       if (saveManyOpen) return; // diálogo "Save N items" cuida do teclado
       if (confirmIds) return; // confirmação de exclusão cuida do teclado

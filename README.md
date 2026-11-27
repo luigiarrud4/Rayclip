@@ -513,6 +513,15 @@ copiou, então se o gerenciador não publicar o marcador o conteúdo entra no
 histórico dele. A decisão fica nossa, de propósito, e o interruptor "Also capture
 passwords & protected content" desliga o filtro quando você quiser.
 
+### Novidades da v0.1.65 — Ctrl+F não abre mais a barra de localizar
+
+- `Ctrl+F` abria a barra de localizar do **próprio WebView2** (a caixinha escura
+  com ^ v e X que ficava flutuando). Agora as teclas de atalho do navegador estão
+  **desligadas** (`AreBrowserAcceleratorKeysEnabled = false`), e de quebra o
+  `Ctrl+P` (fixar) voltou a funcionar — o Chromium o consumia para impressão.
+- Se você mapear `Ctrl+F`/`Ctrl+G`/`Ctrl+J`/`Ctrl+H`/`Ctrl+D` como atalho do app,
+  o seu mapeamento vale.
+
 ### Novidades da v0.1.64 — área de atualizações refeita
 
 - Botão principal, **"Última verificação"** com tempo relativo (fica salva entre

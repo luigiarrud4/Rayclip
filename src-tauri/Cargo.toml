@@ -1,6 +1,6 @@
 [package]
 name = "rayclip"
-version = "0.1.64"
+version = "0.1.65"
 description = "Clipboard History - recriacao do Raycast Clipboard"
 edition = "2021"
 rust-version = "1.77"
@@ -63,6 +63,12 @@ features = [
   "Win32_Storage_FileSystem",
   "Win32_UI_Shell",
 ]
+
+[target."cfg(windows)".dependencies]
+# Para desligar as teclas de atalho do navegador no WebView2
+# (`AreBrowserAcceleratorKeysEnabled`): sem isso Ctrl+F abre a barra de localizar
+# do prÃ³prio WebView2 e Ctrl+P abre impressÃ£o, em vez das aÃ§Ãµes do app.
+webview2-com = "0.39"
 
 [profile.release]
 codegen-units = 1

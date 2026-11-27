@@ -8,11 +8,11 @@ dele é usado; só o resultado visual e funcional foi reproduzido.
 
 - Pasta do projeto: `C:\Users\Lugia\Projects\rayclip`
 - Stack: **Tauri v2 (Rust) + React + TypeScript + WebView2**
-- Versão atual: **0.1.64**
+- Versão atual: **0.1.65**
 - Binário: `src-tauri/target/release/rayclip.exe` (SHA256
-  `7dae0c0cd39e3fb658e611b5e15259d3e9079a0b638d6e66944b9333990223cd`)
-- Instalador: `src-tauri/target/release/bundle/nsis/Rayclip_0.1.64_x64-setup.exe`
-  (3.834.378 B) · instala em `C:\Program Files\Rayclip` com UAC
+  `1763cd3b8acce4296e64c36bff008bda7959d38647c5589a3c5bcaaba3033751`)
+- Instalador: `src-tauri/target/release/bundle/nsis/Rayclip_0.1.65_x64-setup.exe`
+  (3.836.548 B) · instala em `C:\Program Files\Rayclip` com UAC
 
 Este documento explica **o que o app faz, como é feito por dentro e como cada
 problema difícil foi resolvido** (com a medição usada para provar).
@@ -4199,3 +4199,43 @@ sendo baixado, nem como tentar de novo.
 | verificar com "Offline e privado" ligado | ponto vermelho, "O modo Offline e privado está ligado — desligue para procurar atualizações", botão **Tentar de novo** |
 
 `tsc` 0 · `check_i18n` 316 usos, **0 sem tradução** · `cargo test` 65 · clippy 0.
+
+### 8.81 Ctrl+F abria a barra de localizar do WebView2 (v0.1.65)
+
+Relato com captura (`Rayclip image 2026-11-27 01-42-11 1b73d2e4.png`, 478x78):
+*"quando aperta Ctrl+F aparece isso e fica flutuando"* — uma barra escura com
+**^ v ≡ X** sobre a interface.
+
+#### O que era
+
+A barra de **localizar do próprio WebView2** (find in page do Chromium). Reproduz
+aqui com `Ctrl+F` sintético: a barra aparece no topo-direito da janela (visão
+confirmada em captura) e é **janela do próprio WebView2**, não nossa. O `Ctrl+F`
+não é atalho do app — é o navegador embutido.
+
+#### Correção, nos dois níveis
+
+1. **Raiz**: `AreBrowserAcceleratorKeysEnabled = FALSE` no WebView2, via
+   `WebviewWindow::with_webview` + `ICoreWebView2Settings3` (dependência nova
+   `webview2-com = "0.39"` na mesma versão do tauri). Isso desliga **todas** as
+   teclas do navegador: `Ctrl+F` (localizar), `Ctrl+P` (impressão — que consumia
+   o atalho "fixar" antes de a página vê-lo), `Ctrl+U`, `Ctrl+G`, `Ctrl+D`,
+   `Ctrl+J`, `Ctrl+H`. Log: `webview2: teclas do navegador desligadas`.
+2. **Rede de segurança na página**: `onKey` bloqueia `Ctrl+F/G/J/H/D` **que não
+   estejam mapeados** em `inAppKeys` — se o usuário mapear um deles, o dele vale.
+
+#### Verificado
+
+- `Ctrl+F` com tecla real: **sem barra** (captura conferida por visão: "No").
+- `Ctrl+P` (fixar) com **um** aperto real: `pinned true -> false` — antes o
+  Chromium consumia a tecla para impressão e o atalho nunca chegava.
+- `Ctrl+K` (ações) abre o painel; `Ctrl+T`, `Ctrl+O` seguem configuráveis.
+- `cargo test` 65 · clippy 0 · tsc 0.
+
+#### Armadilha de teste registrada
+
+`entrada.tecla(vk, cima=True)` manda **keydown + keyup**; chamar
+`tecla(vk, cima=False)` e depois `tecla(vk, cima=True)` manda o keydown **duas
+vezes** — o atalho dispara duas vezes e o "fixar" liga e desliga (parece que não
+funciona). O jeito certo: `tecla(vk)` (padrão) para teclas simples e
+`tecla(mod, cima=False)` só para os modificadores.

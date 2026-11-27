@@ -4035,6 +4035,35 @@ pub fn run() {
                         }
                     });
                 }
+                // Teclas de atalho do **navegador** desligadas no WebView2.
+                //
+                // Sem isto, `Ctrl+F` abre a barra de localizar do próprio
+                // WebView2 (aquela caixinha escura flutuante com ^ v e X que
+                // ficava sobre a interface) e `Ctrl+P` abre a impressão — em vez
+                // das ações do app. Medido: com o atalho do navegador ligado o
+                // `Ctrl+P` configurado como "fixar" nem chegava à página.
+                if let Some(win) = app.get_webview_window("main") {
+                    let _ = win.with_webview(|wv| {
+                        use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Settings3;
+                        use windows::core::Interface;
+                        unsafe {
+                            let Ok(core) = wv.controller().CoreWebView2() else {
+                                log("webview2: sem CoreWebView2 para desligar as teclas do navegador");
+                                return;
+                            };
+                            let Ok(settings) = core.Settings() else {
+                                return;
+                            };
+                            // `AreBrowserAcceleratorKeysEnabled` é do ICoreWebView2Settings3.
+                            if let Ok(s3) = settings.cast::<ICoreWebView2Settings3>() {
+                                let _ = s3.SetAreBrowserAcceleratorKeysEnabled(false);
+                                log("webview2: teclas do navegador desligadas");
+                            } else {
+                                log("webview2: ICoreWebView2Settings3 indisponivel");
+                            }
+                        }
+                    });
+                }
                 vigia_estado(app.handle().clone());
                 {
                     let app_vigia = app.handle().clone();
