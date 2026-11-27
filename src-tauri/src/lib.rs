@@ -2952,6 +2952,67 @@ fn show_window(app: &AppHandle) {
     }
 }
 
+/// Vigia de estado: devolve o que o Windows tira com o tempo (§8.78).
+///
+/// Relato do usuário: depois de horas com o modo translúcido ligado e navegando
+/// pelos links, o painel **perde a transparência** e o **atalho de abrir/fechar
+/// para de responder**, sem nada no histórico explicando. Os dois são estados
+/// que o Windows pode tirar de nós:
+///
+/// - o DWM pode largar o `DWMWA_SYSTEMBACKDROP_TYPE` (troca de GPU, suspensão do
+///   monitor, reinício do compositor) e nada volta a pedir — o painel fica sólido
+///   para sempre;
+/// - o registro do atalho global pode sumir (outro app pedindo a combinação,
+///   reinício do shell) e ninguém percebe.
+///
+/// A cada 30 s, sem custo perceptível, os dois são conferidos e reaplicados **só
+/// quando estão errados** — e cada correção fica no log com o nome do que voltou.
+fn vigia_estado(app: AppHandle) {
+    use tauri_plugin_global_shortcut::GlobalShortcutExt;
+    std::thread::spawn(move || loop {
+        std::thread::sleep(Duration::from_secs(30));
+        // 1) Atalhos globais.
+        let guardados = ATALHOS_ATIVOS
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        if let Some((mostrar, colar)) = guardados {
+            let gs = app.global_shortcut();
+            let perdidos: Vec<String> = [mostrar, colar]
+                .into_iter()
+                .filter(|c| !c.trim().is_empty() && !gs.is_registered(c.as_str()))
+                .collect();
+            if !perdidos.is_empty() {
+                log(&format!("vigia: atalho(s) perdido(s) {perdidos:?} -> reaplicando"));
+                let mut cfg = app
+                    .try_state::<AppState>()
+                    .map(|st| st.settings.lock().unwrap_or_else(|e| e.into_inner()).clone())
+                    .unwrap_or_default();
+                let avisos = apply_shortcuts(&app, &mut cfg);
+                log(&format!("vigia: atalhos reaplicados ({avisos:?})"));
+            }
+        }
+        // 2) Vidro do DWM.
+        let quer_vidro = app
+            .try_state::<AppState>()
+            .map(|st| st.settings.lock().unwrap_or_else(|e| e.into_inner()).translucent)
+            .unwrap_or(false)
+            && sysinteg::windows_transparency();
+        if quer_vidro {
+            if let Some(win) = app.get_webview_window("main") {
+                if let Ok(h) = win.hwnd() {
+                    // Consulta barata; a escrita (33 ms medidos) só quando o
+                    // DWM de fato largou o vidro.
+                    if win32::backdrop_tipo(h.0 as isize) == 1 {
+                        log("vigia: vidro perdido -> reaplicando o acrilico");
+                        win32::reaplica_vidro(h.0 as isize);
+                    }
+                }
+            }
+        }
+    });
+}
+
 fn toggle_window(app: &AppHandle) {
     if let Some(win) = app.get_webview_window("main") {
         let visible = visible_now(app);
@@ -3940,6 +4001,7 @@ pub fn run() {
                         }
                     });
                 }
+                vigia_estado(app.handle().clone());
                 {
                     let app_vigia = app.handle().clone();
                     std::thread::spawn(move || {

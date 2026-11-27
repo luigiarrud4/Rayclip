@@ -8,11 +8,11 @@ dele é usado; só o resultado visual e funcional foi reproduzido.
 
 - Pasta do projeto: `C:\Users\Lugia\Projects\rayclip`
 - Stack: **Tauri v2 (Rust) + React + TypeScript + WebView2**
-- Versão atual: **0.1.61**
+- Versão atual: **0.1.62**
 - Binário: `src-tauri/target/release/rayclip.exe` (SHA256
-  `0a9947ad1bf07d6d2b01a882698c8075c664cd0532d100626ea7f5e208cab98e`)
-- Instalador: `src-tauri/target/release/bundle/nsis/Rayclip_0.1.61_x64-setup.exe`
-  (3.832.419 B) · instala em `C:\Program Files\Rayclip` com UAC
+  `c7b054bd94112a954577713475f6900c7e6c7d7f9755906a25c68092d1f55dde`)
+- Instalador: `src-tauri/target/release/bundle/nsis/Rayclip_0.1.62_x64-setup.exe`
+  (3.831.204 B) · instala em `C:\Program Files\Rayclip` com UAC
 
 Este documento explica **o que o app faz, como é feito por dentro e como cada
 problema difícil foi resolvido** (com a medição usada para provar).
@@ -4057,3 +4057,54 @@ de histórico, tem de estar esperando no logon (é o que o Raycast faz). Teste n
 
 Não verificado aqui: o UAC do instalador (este shell não é elevado, então rodar o
 `setup.exe` abriria a janela do UAC sem ninguém para clicar) — fica para o usuário.
+
+### 8.78 Perda de estado com o tempo: vigia do vidro e dos atalhos (v0.1.62)
+
+Relato: *"depois de um tempo com o modo transparente ligado e passando sobre os
+links com as setas, uma hora ele perde a transparência e o atalho de fechar e
+abrir o app para de funcionar; e os temas não interagem entre si, até quebram
+quando entram em contato"*.
+
+#### O que foi medido antes de mexer
+
+`_ref/teste_navegar_links.py` reproduz o caminho: abre pelo atalho e navega com a
+seta para baixo pelas entradas de link, medindo a cada 5 passos quantos
+`msedgewebview2.exe` filhos o app tem (cada link visitado cria um Chromium oculto
+para o `webmeta`), a memória do processo, o backdrop do DWM e se o atalho responde.
+
+20 setas: **webview2 = 7 constante**, memória **109 → 116 MB**, backdrop **3 (acrílico)**
+o tempo todo, atalho **funcionando**. Ou seja: não há vazamento de Chromium nem
+perda de vidro no caminho curto — o que o usuário viu precisa de **horas**, e são
+estados que o **Windows** pode tirar de nós:
+
+- o DWM larga o `DWMWA_SYSTEMBACKDROP_TYPE` depois de troca de GPU, suspensão do
+  monitor ou reinício do compositor — e nada no app voltava a pedir;
+- o registro do atalho global pode sumir, e ninguém percebia.
+
+#### Correção: `vigia_estado`
+
+Uma thread a cada **30 s**, com custo desprezível, confere e conserta **só o que
+está errado**:
+
+1. **Atalhos**: `gs.is_registered()` para o mostrar e o colar guardados em
+   `ATALHOS_ATIVOS`; se algum não estiver registrado, `apply_shortcuts` roda de
+   novo (`vigia: atalho(s) perdido(s) [...] -> reaplicando`).
+2. **Vidro**: se `translucent` está ligado e o Windows tem efeitos de
+   transparência, mas `backdrop_tipo(hwnd) == 1`, reaplica o acrílico
+   (`vigia: vidro perdido -> reaplicando o acrilico`). A escrita custa os ~33 ms
+   medidos na §8.75, então ela **só** acontece quando o DWM realmente largou.
+
+#### Verificado
+
+- Sabotando o backdrop por fora (`DWMWA_SYSTEMBACKDROP_TYPE = 1` via
+  `DwmSetWindowAttribute`), o vigia devolveu o acrílico em **25 s** e registrou
+  `vigia: vidro perdido -> reaplicando o acrilico`; antes/depois `3`.
+- **100 s com tudo saudável: zero linhas `vigia:`** — não há churn nem
+  re-registro de atalho à toa.
+- `cargo test --lib` = 65, clippy 0.
+
+Os temas ("não interagem, quebram quando entram em contato") não foram
+reproduzidos aqui; o log agora mostra `renderer morto: sem heartbeat…` quando o
+WebView2 reinicia, que é a causa provável desse sintoma (a página recarregada
+perde estado). Se voltar, o `%TEMP%
+ayclip.log` diz qual foi.

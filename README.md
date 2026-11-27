@@ -513,6 +513,18 @@ copiou, então se o gerenciador não publicar o marcador o conteúdo entra no
 histórico dele. A decisão fica nossa, de propósito, e o interruptor "Also capture
 passwords & protected content" desliga o filtro quando você quiser.
 
+### Novidades da v0.1.62 — vigia que devolve o vidro e os atalhos
+
+- Depois de horas, o Windows pode **largar o acrílico** (troca de GPU, suspensão do
+  monitor, reinício do compositor) e o app ficava sólido para sempre; e o
+  **registro do atalho global** pode sumir sem aviso.
+- Agora uma thread a cada 30 s confere os dois — `is_registered` para os atalhos e
+  `DWMWA_SYSTEMBACKDROP_TYPE` para o vidro — e reaplica **só o que está errado**,
+  registrando no log (`vigia: vidro perdido -> reaplicando o acrilico`).
+- Medido: vidro sabotado por fora voltou em **25 s**; 100 s saudáveis = **zero**
+  linhas `vigia:` (sem churn). Testado antes que 20 setas por links não vazam
+  Chromium nem mexem no vidro.
+
 ### Novidades da v0.1.61 — instalador com UAC, fecha o app e liga o logon
 
 - O setup agora **pede administrador** (`installMode: perMachine`) e instala em

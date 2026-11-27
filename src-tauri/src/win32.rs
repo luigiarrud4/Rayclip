@@ -293,6 +293,52 @@ fn set_acrylic_none(hwnd: isize) {
 /// amostra o **papel de parede**, não o que está atrás da janela: com o
 /// navegador atrás do app, Mica continua mostrando o papel de parede e o efeito
 /// parece não existir. O acrílico desfoca o que está de fato embaixo.
+/// Tipo de fundo (backdrop) que o DWM está usando agora: `3` = acrílico,
+/// `1` = nenhum. `-1` quando a consulta falha.
+pub fn backdrop_tipo(hwnd: isize) -> i32 {
+    if hwnd == 0 {
+        return -1;
+    }
+    use windows_sys::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_SYSTEMBACKDROP_TYPE};
+    let mut tipo: i32 = 0;
+    let hr = unsafe {
+        DwmGetWindowAttribute(
+            hwnd as *mut core::ffi::c_void,
+            DWMWA_SYSTEMBACKDROP_TYPE as u32,
+            &mut tipo as *mut _ as *mut core::ffi::c_void,
+            std::mem::size_of::<i32>() as u32,
+        )
+    };
+    if hr == 0 {
+        tipo
+    } else {
+        -1
+    }
+}
+
+/// Reaplica o acrílico **sem** passar pelo caminho de abertura.
+///
+/// Usado pelo vigia (§8.78): quando o DWM perde o vidro depois de horas de uso
+/// (troca de GPU, suspensão do monitor, reinício do compositor), o painel fica
+/// sólido para sempre porque nada volta a pedir. Aqui ele volta.
+pub fn reaplica_vidro(hwnd: isize) {
+    if hwnd == 0 {
+        return;
+    }
+    use windows_sys::Win32::Graphics::Dwm::DwmSetWindowAttribute;
+    const DWMWA_SYSTEMBACKDROP_TYPE: u32 = 38;
+    const DWMSBT_TRANSIENTWINDOW: i32 = 3;
+    let mut tipo = DWMSBT_TRANSIENTWINDOW;
+    unsafe {
+        let _ = DwmSetWindowAttribute(
+            hwnd as *mut core::ffi::c_void,
+            DWMWA_SYSTEMBACKDROP_TYPE,
+            &mut tipo as *mut _ as *mut core::ffi::c_void,
+            std::mem::size_of::<i32>() as u32,
+        );
+    }
+}
+
 pub fn apply_backdrop(hwnd: isize, kind: u32) {
     use windows_sys::Win32::Graphics::Dwm::DwmSetWindowAttribute;
     const DWMWA_SYSTEMBACKDROP_TYPE: u32 = 38;
