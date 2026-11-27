@@ -150,6 +150,17 @@ gh release create "v!NEXT!" --repo %REPO% --target !TARGET_BRANCH! --title "Rayc
 if errorlevel 1 goto :release_falhou
 
 :release_ok
+:: Checagem obrigatoria: o updater do app baixa o asset "rayclip.exe".
+:: (A v0.1.61-0.1.64 foram publicadas na mao sem ele e o botao de atualizar
+:: ficou morto ate o backfill - nunca de novo sem esse asset.)
+gh release view "v!NEXT!" --repo %REPO% --json assets | findstr /C:"\"name\":\"rayclip.exe\"" >nul 2>&1
+if errorlevel 1 (
+    echo  ERRO: a release v!NEXT! ficou SEM o asset rayclip.exe.
+    echo        O updater do app depende dele. Publique com:
+    echo          gh release upload "v!NEXT!" "!EXE!" "!HASHFILE!" --clobber
+    goto :fim_erro
+)
+
 echo.
 echo  ===============================================
 echo    RELEASE v!NEXT! PUBLICADA

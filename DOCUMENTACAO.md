@@ -4239,3 +4239,44 @@ não é atalho do app — é o navegador embutido.
 vezes** — o atalho dispara duas vezes e o "fixar" liga e desliga (parece que não
 funciona). O jeito certo: `tecla(vk)` (padrão) para teclas simples e
 `tecla(mod, cima=False)` só para os modificadores.
+
+### 8.82 "O botão de atualizar não funciona" — as releases estavam sem o exe (v0.1.65, backfill)
+
+Captura do usuário (`Screenshot_35.png`): cartão "v0.1.65" com o botão
+**"Instalar atualização"** que não fazia nada.
+
+#### Causa: erro meu, não do app
+
+O `deploy.bat` sempre publicava **três** assets — `rayclip.exe`,
+`rayclip.exe.sha256` e o instalador — e o comentário no topo dele até avisa que o
+asset do exe é obrigatório. Mas da v0.1.61 à v0.1.64 eu publiquei as releases
+**na mão** com `gh release create ... setup.exe`, sem o exe. O updater baixa
+exatamente `rayclip.exe` (`ASSET` em `update.rs`), então `has_asset` virava
+`false` e o botão ficava desabilitado — o clique não faz nada, e na 0.1.59 (a que
+o usuário rodava) o aviso era só o `title` do botão.
+
+#### Correção
+
+1. **Backfill**: `rayclip.exe` + `rayclip.exe.sha256` publicados na v0.1.65. O
+   GitHub calcula o `digest` do asset no upload, e o `update_check` passou a
+   devolver `hasAsset: true` com o checksum interno — medido:
+
+   ```
+   update_check  -> {"v":"0.1.65","asset":true,"size":11188224}
+   update_install-> ok:0.1.65   (baixou, conferiu o SHA-256, trocou e reabriu)
+   ```
+
+   O teste de ponta a ponta rodou no app real: o processo trocou de arquivo e
+   voltou como **0.1.65**, com o exe anterior preservado como `.old`.
+2. **Para não repetir**: o `deploy.bat` agora **recusa** concluir se a release
+   publicada não tiver o asset `rayclip.exe` (checagem pós-publicação com
+   `findstr` no JSON; testada contra v0.1.65 = OK e v0.1.61 = FALHOU).
+3. A UI da 0.1.64+ já mostra o motivo ("Sem SHA-256 publicado", botão com o
+   `title` explicando) — mas a lição é: publicar release **sempre** pelo
+   `deploy.bat`, nunca na mão.
+
+#### Nota
+
+As v0.1.61–0.1.64 continuam sem o asset do exe (os binários daquelas builds não
+existem mais); quem estiver nelas atualiza direto para a `latest` (0.1.65), que é
+o único destino que o updater consulta.
