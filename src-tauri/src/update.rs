@@ -365,6 +365,15 @@ pub fn instalar(
         let _ = std::fs::remove_file(&staged);
         return Err("the download is too small to be the app".to_string());
     }
+    // Tamanho anunciado pela release: se o que chegou não bate, alguma coisa
+    // (proxy, antivírus, conexão cortada) entregou outro conteúdo — recusa antes
+    // de mexer no exe, mesmo que o hash por acaso batesse.
+    if total > 0 && baixado != total {
+        let _ = std::fs::remove_file(&staged);
+        return Err(format!(
+            "the download has {baixado} bytes but the release announces {total} — update refused"
+        ));
+    }
 
     // ---- leitura de volta (veredito do antivírus) --------------------------
     match std::fs::read(&staged) {

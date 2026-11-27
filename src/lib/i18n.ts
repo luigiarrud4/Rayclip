@@ -366,6 +366,21 @@ Object.assign(PT, {
 
 Object.assign(PT, {
   "Clipboard History": "Histórico do clipboard",
+  "Last check: {when}": "Última verificação: {when}",
+  "Current": "Instalada",
+  "New": "Nova",
+  "Published": "Publicada",
+  "Download": "Download",
+  "SHA-256 published": "SHA-256 publicado",
+  "No SHA-256 published": "Sem SHA-256 publicado",
+  "This release has no checksum, so the update is refused": "Esta release não publica o checksum, então a atualização é recusada",
+  "Install v{v}": "Instalar v{v}",
+  "Checking the checksum and swapping the files…": "Conferindo o checksum e trocando os arquivos…",
+  "Try again": "Tentar de novo",
+  "Offline mode is on — turn it off to check for updates":
+    "O modo Offline e privado está ligado — desligue para procurar atualizações",
+  "Offline mode is on — turn it off to install the update":
+    "O modo Offline e privado está ligado — desligue para instalar a atualização",
   "This format cannot be played here": "Este formato não pode ser reproduzido aqui",
   "Muted by default": "Sem som por padrão",
 });

@@ -144,6 +144,21 @@ function pretty(accel: string) {
   );
 }
 
+/** "agora", "há 3 min", "há 2 h", "há 4 dias" a partir de um epoch em ms. */
+function quando(ms: number): string {
+  const seg = Math.max(0, Math.round((Date.now() - ms) / 1000));
+  if (seg < 45) return "agora";
+  if (seg < 3600) return `${Math.round(seg / 60)} min`;
+  if (seg < 86_400) return `${Math.round(seg / 3600)} h`;
+  return `${Math.round(seg / 86_400)} d`;
+}
+
+function tamanho(bytes: number): string {
+  if (!bytes || bytes < 0) return "—";
+  const mb = bytes / (1024 * 1024);
+  return mb >= 1 ? `${mb.toFixed(1)} MB` : `${Math.round(bytes / 1024)} KB`;
+}
+
 export function SettingsPage({
   onClose,
   onSaved,
@@ -186,6 +201,14 @@ export function SettingsPage({
   const [installing, setInstalling] = useState(false);
   const [progress, setProgress] = useState<{ downloaded: number; total: number } | null>(null);
   const [checkMsg, setCheckMsg] = useState<{ text: string; kind: "ok" | "err" } | null>(null);
+  // Quando foi a última verificação (sobrevive a fechar a página: é a data que
+  // interessa quando o usuário volta depois de horas).
+  const [ultimaChecagem, setUltimaChecagem] = useState<number | null>(() => {
+    const v = Number(localStorage.getItem("rayclip.ultimaChecagem") || 0);
+    return v > 0 ? v : null;
+  });
+  // Fase vinda do backend: baixando -> trocando arquivos.
+  const [fase, setFase] = useState<"download" | "swap" | null>(null);
 
   useEffect(() => {
     if (availableUpdate) setRelease(availableUpdate);
@@ -195,18 +218,38 @@ export function SettingsPage({
     const un = listen<{ downloaded: number; total: number }>("update:progress", (e) =>
       setProgress(e.payload)
     );
+    const unFase = listen<string>("update:phase", (e) =>
+      setFase(e.payload === "swap" ? "swap" : "download")
+    );
     return () => {
       void un.then((f) => f());
+      void unFase.then((f) => f());
     };
   }, []);
 
+  const marcarChecagem = () => {
+    const agora = Date.now();
+    setUltimaChecagem(agora);
+    localStorage.setItem("rayclip.ultimaChecagem", String(agora));
+  };
+
   const checkNow = async () => {
+    // Checagem antes de sair: com "Offline e privado" ligado o app não fala com
+    // a rede por definição — avisar aqui é melhor que devolver erro do backend.
+    if (cfg?.offlineMode) {
+      setCheckMsg({
+        text: t("Offline mode is on — turn it off to check for updates"),
+        kind: "err",
+      });
+      return;
+    }
     setChecking(true);
     setCheckMsg(null);
     try {
       const info = await api.updateCheck(true);
       setRelease(info);
       onUpdateFound?.(info);
+      marcarChecagem();
       setCheckMsg({
         text: info
           ? t("Version {v} is available", { v: info.version })
@@ -226,16 +269,26 @@ export function SettingsPage({
   };
 
   const installNow = async () => {
+    if (cfg?.offlineMode) {
+      setCheckMsg({
+        text: t("Offline mode is on — turn it off to install the update"),
+        kind: "err",
+      });
+      return;
+    }
     setInstalling(true);
+    setFase("download");
     setProgress({ downloaded: 0, total: release?.size ?? 0 });
     setCheckMsg(null);
     try {
       const v = await api.updateInstall();
+      setFase("swap");
       // O app fecha logo em seguida para o exe novo assumir o banco.
       setCheckMsg({ text: t("Installed v{v} — Rayclip is reopening", { v }), kind: "ok" });
     } catch (e) {
       setInstalling(false);
       setProgress(null);
+      setFase(null);
       setCheckMsg({
         text: t("Update failed — {msg}", {
           msg: e instanceof Error ? e.message : String(e),
@@ -986,22 +1039,34 @@ export function SettingsPage({
                 onChange={(v) => void update({ autoUpdateCheck: v })}
               />
             </Field>
-            <Field
-              title={t("Check now")}
-              desc={t("Ask GitHub for the latest release")}
-            >
+            <div className="update-top">
               <button
                 type="button"
-                className="btn"
+                className="btn-primary update-check"
                 disabled={checking || installing}
                 onClick={() => void checkNow()}
               >
                 {checking ? t("Checking…") : t("Check for updates")}
               </button>
-            </Field>
+              {ultimaChecagem && (
+                <span className="update-when">
+                  {t("Last check: {when}", { when: quando(ultimaChecagem) })}
+                </span>
+              )}
+            </div>
             {checkMsg && (
-              <div className="settings-hint" data-kind={checkMsg.kind}>
-                <span className={`status-dot ${checkMsg.kind}`} /> {checkMsg.text}
+              <div className="settings-hint update-msg" data-kind={checkMsg.kind}>
+                <span className={`status-dot ${checkMsg.kind}`} />
+                <span className="update-msg-text">{checkMsg.text}</span>
+                {checkMsg.kind === "err" && !checking && !installing && (
+                  <button
+                    type="button"
+                    className="btn update-retry"
+                    onClick={() => void (release ? installNow() : checkNow())}
+                  >
+                    {t("Try again")}
+                  </button>
+                )}
               </div>
             )}
             {release && !installing && !checking && (
@@ -1012,22 +1077,43 @@ export function SettingsPage({
                     {release.name || release.tag || `v${release.version}`}
                   </span>
                 </div>
+                <div className="update-meta">
+                  <span>
+                    {t("Current")}: <b>{`v${release.current}`}</b>
+                  </span>
+                  <span>
+                    {t("New")}: <b>{`v${release.version}`}</b>
+                  </span>
+                  {release.publishedAt && (
+                    <span>
+                      {t("Published")}: <b>{release.publishedAt.slice(0, 10)}</b>
+                    </span>
+                  )}
+                  <span>
+                    {t("Download")}: <b>{tamanho(release.size)}</b>
+                  </span>
+                  <span data-kind={release.sha256 ? "ok" : "err"}>
+                    {release.sha256 ? t("SHA-256 published") : t("No SHA-256 published")}
+                  </span>
+                </div>
                 {release.notes && (
-                  <pre className="update-notes">{release.notes.slice(0, 1200)}</pre>
+                  <pre className="update-notes">{release.notes.slice(0, 4000)}</pre>
                 )}
                 <div className="update-actions">
                   <button
                     type="button"
                     className="btn-primary"
-                    disabled={!release.hasAsset}
+                    disabled={!release.hasAsset || installing}
                     title={
-                      release.hasAsset
-                        ? t("Download, check and restart in the new version")
-                        : t("This release has no rayclip.exe to download")
+                      !release.hasAsset
+                        ? t("This release has no rayclip.exe to download")
+                        : !release.sha256
+                          ? t("This release has no checksum, so the update is refused")
+                          : t("Download, check and restart in the new version")
                     }
                     onClick={() => void installNow()}
                   >
-                    {t("Install update")}
+                    {t("Install v{v}", { v: release.version })}
                   </button>
                   {release.pageUrl && (
                     <button
@@ -1046,15 +1132,22 @@ export function SettingsPage({
                 <div className="update-card-head">
                   <span className="update-badge">{`v${release?.version ?? ""}`}</span>
                   <span className="update-title">
-                    {progress && progress.total > 0
-                      ? t("Downloading… {pct}%", {
-                          pct: Math.min(
-                            100,
-                            Math.round((progress.downloaded / progress.total) * 100)
-                          ),
-                        })
-                      : t("Downloading…")}
+                    {fase === "swap"
+                      ? t("Checking the checksum and swapping the files…")
+                      : progress && progress.total > 0
+                        ? t("Downloading… {pct}%", {
+                            pct: Math.min(
+                              100,
+                              Math.round((progress.downloaded / progress.total) * 100)
+                            ),
+                          })
+                        : t("Downloading…")}
                   </span>
+                  {fase !== "swap" && progress && progress.total > 0 && (
+                    <span className="update-bytes">
+                      {`${tamanho(progress.downloaded)} / ${tamanho(progress.total)}`}
+                    </span>
+                  )}
                 </div>
                 <div className="update-bar">
                   <span

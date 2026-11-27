@@ -623,17 +623,33 @@ async fn update_install(app: AppHandle) -> Result<String, String> {
     if lock_settings(&app.state::<AppState>().settings).offline_mode {
         return Err("offline mode is on".to_string());
     }
+    // Um install por vez: dois cliques (ou um clique e o vigia de versão) não
+    // podem baixar e trocar o exe ao mesmo tempo.
+    if INSTALANDO.swap(true, Ordering::SeqCst) {
+        return Err("an update is already running".to_string());
+    }
+    struct Solta;
+    impl Drop for Solta {
+        fn drop(&mut self) {
+            INSTALANDO.store(false, Ordering::SeqCst);
+        }
+    }
+    let _solta = Solta;
     let exe = update::exe_atual().ok_or("no exe path")?;
     let emit_handle = app.clone();
     let versao = tauri::async_runtime::spawn_blocking(move || -> Result<String, String> {
         let info = update::check(true)?
             .ok_or_else(|| "you are already on the latest version".to_string())?;
+        // Fase visível na interface: baixando -> trocando.
+        let _ = emit_handle.emit("update:phase", "download");
+        let emit_progresso = emit_handle.clone();
         update::instalar(&info, &exe, move |baixado, total| {
-            let _ = emit_handle.emit(
+            let _ = emit_progresso.emit(
                 "update:progress",
                 serde_json::json!({ "downloaded": baixado, "total": total }),
             );
         })?;
+        let _ = emit_handle.emit("update:phase", "swap");
         update::relaunch(&exe)?;
         Ok(info.version)
     })
@@ -851,6 +867,9 @@ static ARRASTANDO: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool
 /// tela há mais de 20 s e não chega batida há 15 s, o renderer não está
 /// executando JS — recarrega.
 static ULTIMO_BATIMENTO: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Um `update_install` por vez (dois cliques não podem trocar o exe juntos).
+static INSTALANDO: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Quantos `reload()` já foram tentados sem a página voltar a dar sinal.
 static TENTATIVAS_RELOAD: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);

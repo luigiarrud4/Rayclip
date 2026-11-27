@@ -2477,6 +2477,56 @@ html[data-translucency="on"][data-theme="light"] {
   display: flex;
   gap: 8px;
 }
+/* Metadados da release: instalada -> nova, data, tamanho e checksum. */
+.update-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin-bottom: 9px;
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+}
+.update-meta b {
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+.update-meta [data-kind="err"] {
+  color: var(--red);
+}
+.update-meta [data-kind="ok"] {
+  color: var(--green, #59d499);
+}
+.update-top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.update-check {
+  min-width: 150px;
+  justify-content: center;
+}
+.update-when {
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+}
+.update-bytes {
+  margin-left: auto;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-tertiary);
+}
+.update-msg {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.update-msg-text {
+  flex: 1;
+  min-width: 0;
+}
+.update-retry {
+  flex-shrink: 0;
+}
 .update-bar {
   height: 4px;
   border-radius: 2px;

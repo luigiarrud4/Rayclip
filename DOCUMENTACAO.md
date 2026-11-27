@@ -8,11 +8,11 @@ dele é usado; só o resultado visual e funcional foi reproduzido.
 
 - Pasta do projeto: `C:\Users\Lugia\Projects\rayclip`
 - Stack: **Tauri v2 (Rust) + React + TypeScript + WebView2**
-- Versão atual: **0.1.63**
+- Versão atual: **0.1.64**
 - Binário: `src-tauri/target/release/rayclip.exe` (SHA256
-  `14fa809102d43ab80136d8f7e17cfe5a7db0a8b53dbd6e2f41f5b466a869934e`)
-- Instalador: `src-tauri/target/release/bundle/nsis/Rayclip_0.1.63_x64-setup.exe`
-  (3.832.468 B) · instala em `C:\Program Files\Rayclip` com UAC
+  `7dae0c0cd39e3fb658e611b5e15259d3e9079a0b638d6e66944b9333990223cd`)
+- Instalador: `src-tauri/target/release/bundle/nsis/Rayclip_0.1.64_x64-setup.exe`
+  (3.834.378 B) · instala em `C:\Program Files\Rayclip` com UAC
 
 Este documento explica **o que o app faz, como é feito por dentro e como cada
 problema difícil foi resolvido** (com a medição usada para provar).
@@ -4148,3 +4148,54 @@ Com o app rodando e trocando de tema pelo IPC (Mica ligado, `bgOpacity` 0.55):
 painel `dark 89 · midnight 93 · nord 109 · rose 93 · light 201`, cada tema com o
 **seu** vidro (`rgb(11 18 36 / 0.63)`, `rgb(46 52 64 / 0.63)`…), e o tema claro com
 contraste **9,1:1**.
+
+### 8.80 Reforma da área de atualizações (v0.1.64)
+
+Pedido: *"o botão de atualizar precisa de uma reforma e checks melhores também
+para erros"*.
+
+#### Antes
+
+Um `Field` com um botão "Check for updates", uma linha de status e, quando havia
+release, um cartão com versão + notas + "Install update". Erros chegavam como um
+texto solto e não havia nem quando foi a última verificação, nem o que estava
+sendo baixado, nem como tentar de novo.
+
+#### Depois — o que a seção mostra
+
+- **Botão primário** "Procurar atualizações" (grande, alinhado à esquerda) e, ao
+  lado, **"Última verificação: …"** com tempo relativo (`agora`, `3 min`, `2 h`,
+  `4 d`). A data vai para o `localStorage` (`rayclip.ultimaChecagem`), então
+  continua fazendo sentido ao reabrir a página.
+- **Cartão da release** com metadados em linha: instalada → nova, **data de
+  publicação**, **tamanho** do download e **"SHA-256 publicado" / "Sem SHA-256
+  publicado"** (em vermelho — sem checksum a instalação é recusada e o botão
+  explica isso no `title`). As notas ficam num bloco rolável de 132 px.
+- **Progresso em duas fases**, vindas do backend pelo evento novo
+  `update:phase`: "Baixando… 42%" com **bytes** (`1.2 MB / 3.8 MB`) e, depois,
+  "Conferindo o checksum e trocando os arquivos…".
+- **Erro** com ponto vermelho, o motivo e um botão **"Tentar de novo"** que
+  repete a ação certa (instalar, se havia release; senão, verificar).
+- **"Offline e privado" ligado** é checado **antes** de sair para a rede, com
+  mensagem própria em português em vez de um erro do backend.
+
+#### Checks novos no backend
+
+- **Tamanho tem de bater**: se a release anuncia `size` e o que chegou tem outro
+  tamanho, o update é recusado **antes** de tocar no exe (proxy/antivírus/conexão
+  cortada entregando outro conteúdo).
+- **Um install por vez**: `INSTALANDO` (`AtomicBool`) recusa o segundo pedido com
+  `an update is already running` — dois cliques não baixam nem trocam o exe juntos.
+- Continuam valendo os que já existiam: host do download obrigatório, checksum
+  obrigatório (falha fechada), hash conferido durante a gravação, `MZ` conferido
+  após o swap, `.old` preservado e rollback em qualquer falha.
+
+#### Verificado com o app aberto e o IPC real
+
+| Ação | Resultado na UI |
+|---|---|
+| abrir Atualizações | botão "Procurar atualizações" + "Última verificação: …" |
+| verificar (versão em dia) | ponto verde, "Você está na versão mais nova", data gravada |
+| verificar com "Offline e privado" ligado | ponto vermelho, "O modo Offline e privado está ligado — desligue para procurar atualizações", botão **Tentar de novo** |
+
+`tsc` 0 · `check_i18n` 316 usos, **0 sem tradução** · `cargo test` 65 · clippy 0.

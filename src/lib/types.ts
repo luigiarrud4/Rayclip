@@ -138,6 +138,8 @@ export interface UpdateInfo {
   pageUrl: string;
   size: number;
   hasAsset: boolean;
+  /** SHA-256 publicado na release; sem ele o app **recusa** instalar. */
+  sha256?: string | null;
 }
 
 export type SaveItem = { id: string; format: string };

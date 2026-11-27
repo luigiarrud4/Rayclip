@@ -513,6 +513,19 @@ copiou, então se o gerenciador não publicar o marcador o conteúdo entra no
 histórico dele. A decisão fica nossa, de propósito, e o interruptor "Also capture
 passwords & protected content" desliga o filtro quando você quiser.
 
+### Novidades da v0.1.64 — área de atualizações refeita
+
+- Botão principal, **"Última verificação"** com tempo relativo (fica salva entre
+  aberturas da página), cartão com **data, tamanho e se a release publica o
+  SHA-256** (sem checksum o update é recusado), notas roláveis.
+- Progresso em duas fases (`Baixando 42% · 1.2 MB / 3.8 MB` →
+  `Conferindo o checksum e trocando os arquivos…`), vindas do evento novo
+  `update:phase`.
+- Erro com motivo + **Tentar de novo**; "Offline e privado" é checado antes de
+  qualquer acesso à rede, com mensagem própria.
+- Backend: **tamanho do download tem de bater** com o anunciado, e **um install
+  por vez** (`INSTALANDO`).
+
 ### Novidades da v0.1.63 — tema claro com Mica deixou de ser ilegível
 
 - `rgbDe()` só entendia `#rrggbb`; o `getComputedStyle` devolve o vidro do tema em
